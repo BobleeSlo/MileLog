@@ -52,16 +52,48 @@ struct AuthView: View {
                         infoMessage = nil
                     }
                     .font(.footnote)
+
+                    // Without this there was no recovery path at all — a
+                    // forgotten password permanently locked the user out of
+                    // their entire mileage history (round-5 UX review
+                    // finding). Only offered on the sign-in side, where it
+                    // makes sense.
+                    if !isSignUp {
+                        Button("Forgot password?") {
+                            Task { await sendReset() }
+                        }
+                        .font(.footnote)
+                        .disabled(supabase.isWorking || !email.contains("@"))
+                    }
                 }
 
                 Section {
-                    Text("Your trips are stored in your own Supabase project. " +
-                         "Row-Level Security keeps every row private to your account.")
+                    // "Supabase"/"Row-Level Security" is backend
+                    // vocabulary, shown before a first-time, non-technical
+                    // user has even created an account (round-2 UX review
+                    // finding).
+                    Text("Your trips are private and only visible to you.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             }
             .navigationTitle("MileLog")
+            .keyboardDoneToolbar()
+        }
+    }
+
+    private func sendReset() async {
+        errorMessage = nil
+        infoMessage = nil
+        do {
+            try await supabase.sendPasswordReset(email: email)
+            // Deliberately phrased so it's true whether or not an account
+            // exists for that address — confirming which addresses are
+            // registered would leak account existence to anyone who can
+            // type an email in.
+            infoMessage = "If an account exists for \(email), a password reset link is on its way."
+        } catch {
+            errorMessage = Self.friendlyAuthError(error)
         }
     }
 
@@ -83,7 +115,36 @@ struct AuthView: View {
                 try await supabase.signIn(email: email, password: password)
             }
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = Self.friendlyAuthError(error)
         }
+    }
+
+    /// The app's front door showed raw SDK/network error text
+    /// (`error.localizedDescription`) with zero MileLog-authored
+    /// explanation — wrong-password/network/already-registered are
+    /// common-path here, not edge cases, for a non-technical user's very
+    /// first interaction with the app (round-2 UX review finding).
+    private static func friendlyAuthError(_ error: Error) -> String {
+        let raw = error.localizedDescription.lowercased()
+        if raw.contains("invalid login credentials") || raw.contains("invalid_grant") {
+            return "That email or password isn't right. Check them and try again."
+        }
+        if raw.contains("already registered") || raw.contains("already exists") {
+            return "An account with that email already exists — try signing in instead."
+        }
+        // Narrower than a bare "password" match: Supabase's own password
+        // policy (minimum length, breach checks, complexity) is server-
+        // configurable independent of this app's local 6-character check,
+        // so "any error mentioning password" previously produced this same
+        // confidently-wrong explanation for something that might not
+        // actually be a length issue at all (round-3 UX review finding).
+        if raw.contains("password")
+            && (raw.contains("short") || raw.contains("least") || raw.contains("weak") || raw.contains("characters")) {
+            return "Password needs to be at least 6 characters."
+        }
+        if raw.contains("network") || raw.contains("offline") || raw.contains("internet connection") {
+            return "Couldn't connect. Check your internet connection and try again."
+        }
+        return "Something went wrong. Please try again in a moment."
     }
 }

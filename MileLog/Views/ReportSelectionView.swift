@@ -16,10 +16,22 @@ struct ReportSelectionView: View {
 
     @State private var selected: Set<UUID>
     @State private var result: PDFReporter.Result?
+    @State private var generationFailed = false
+    /// `PDFReporter`'s generators are fully synchronous, main-thread Core
+    /// Graphics work — tapping Generate previously gave zero loading
+    /// feedback (no spinner, no button-state change), so a heavier
+    /// logbook could visibly stall the UI with nothing reassuring the
+    /// user anything was happening (round-3 UX review finding). A
+    /// `Task.yield()` before the blocking call lets this state actually
+    /// render first; true background generation isn't attempted here
+    /// since `generate`'s closures can call back into main-actor-isolated
+    /// Store lookups.
+    @State private var isGenerating = false
 
     init(
         title: String,
         candidateTrips: [Trip],
+        defaultSelected: [Trip]? = nil,
         formatRow: @escaping (Trip) -> AnyView,
         generate: @escaping ([Trip]) -> PDFReporter.Result?
     ) {
@@ -27,7 +39,7 @@ struct ReportSelectionView: View {
         self.candidateTrips = candidateTrips
         self.formatRow = formatRow
         self.generate = generate
-        _selected = State(initialValue: Set(candidateTrips.map(\.id)))
+        _selected = State(initialValue: Set((defaultSelected ?? candidateTrips).map(\.id)))
     }
 
     private var selectedTrips: [Trip] {
@@ -85,6 +97,17 @@ struct ReportSelectionView: View {
                     }
                     .buttonStyle(.borderedProminent)
                 }
+            } else if generationFailed {
+                // PDFReporter now returns nil on a write failure instead of
+                // a "successful" Result pointing at a missing/corrupt file
+                // — but tapping Generate and having nothing happen, with
+                // no explanation, is its own confusing dead end for what's
+                // often the actual tax deliverable the user needs (round-2
+                // UX review finding).
+                Section {
+                    Text("Couldn't create the PDF — check available storage and try again.")
+                        .foregroundColor(.red)
+                }
             }
         }
         .navigationTitle(title)
@@ -94,10 +117,22 @@ struct ReportSelectionView: View {
                 if !candidateTrips.isEmpty { quickFilterMenu }
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button("Generate") {
-                    result = generate(selectedTrips)
+                Button {
+                    Task {
+                        isGenerating = true
+                        await Task.yield()   // let the spinner actually render first
+                        result = generate(selectedTrips)
+                        generationFailed = (result == nil)
+                        isGenerating = false
+                    }
+                } label: {
+                    if isGenerating {
+                        ProgressView()
+                    } else {
+                        Text("Generate")
+                    }
                 }
-                .disabled(selected.isEmpty)
+                .disabled(selected.isEmpty || isGenerating)
             }
         }
     }
@@ -107,27 +142,33 @@ struct ReportSelectionView: View {
             Button("Select all") {
                 selected = Set(candidateTrips.map(\.id))
                 result = nil
+                generationFailed = false
             }
             Button("Deselect all", role: .destructive) {
                 selected.removeAll()
                 result = nil
+                generationFailed = false
             }
             Divider()
             Button("Business only") {
                 selected = Set(candidateTrips.filter { $0.type == .business }.map(\.id))
                 result = nil
+                generationFailed = false
             }
             Button("Commute only") {
                 selected = Set(candidateTrips.filter { $0.type == .commute }.map(\.id))
                 result = nil
+                generationFailed = false
             }
         } label: {
             Image(systemName: "checklist")
         }
+        .accessibilityLabel("Selection filters")
     }
 
     private func toggle(_ id: UUID) {
         if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
         result = nil   // invalidate the PDF — user must regenerate with new selection
+        generationFailed = false
     }
 }
