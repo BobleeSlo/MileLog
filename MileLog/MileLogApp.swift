@@ -1,32 +1,37 @@
-//
-//  MileLogApp.swift
-//  MileLog
-//
-//  Created by Robert LIPIC on 13. 6. 2026.
-//
-
 import SwiftUI
-import SwiftData
 
 @main
 struct MileLogApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
+    @StateObject private var store = Store()
+    @StateObject private var location = LocationManager()
+    @StateObject private var supabase = SupabaseService()
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
+                .environmentObject(store)
+                .environmentObject(location)
+                .environmentObject(supabase)
         }
-        .modelContainer(sharedModelContainer)
+    }
+}
+
+/// Shows the auth screen until the user signs in, then hands off to the tabbed UI
+/// and triggers an initial cloud sync.
+struct RootView: View {
+    @EnvironmentObject var store: Store
+    @EnvironmentObject var supabase: SupabaseService
+
+    var body: some View {
+        Group {
+            if supabase.isAuthenticated {
+                RootTabView()
+                    .task(id: supabase.userEmail) {
+                        await store.initialSync(via: supabase)
+                    }
+            } else {
+                AuthView()
+            }
+        }
     }
 }
