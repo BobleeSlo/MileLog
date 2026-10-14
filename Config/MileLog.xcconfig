@@ -1,0 +1,13 @@
+// MileLog build configuration, used by the MileLog app target (Debug and
+// Release). Committed to git — it must never contain real credentials.
+//
+// The Supabase URL and key live in Config/Secrets.xcconfig, which is
+// gitignored. Create it once per Mac (see README.md). If it is missing the
+// app still builds, but stops at launch with "Missing SUPABASE_URL".
+//
+// Info.plist references these as $(SUPABASE_URL) / $(SUPABASE_ANON_KEY).
+
+SUPABASE_URL =
+SUPABASE_ANON_KEY =
+
+#include? "Secrets.xcconfig"

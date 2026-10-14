@@ -48,194 +48,251 @@ struct TripEditor: View {
         }
     }
 
-    var body: some View {
-        Form {
-            if isLocked {
-                Section {
-                    Label {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Locked entry").bold()
-                            if let lockedAt = trip.lockedAt {
-                                Text("Locked \(lockedAt.formatted(date: .abbreviated, time: .shortened))")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            Text("Mileage, date, vehicle and type can no longer be edited. Edits to purpose, customer and notes are recorded in the compliance audit log.")
+    /// Picker label for a vehicle, archived ones marked as such.
+    ///
+    /// A ternary whose branches are a plain String and an interpolated one
+    /// is cheap here and expensive inside a ForEach inside a Picker inside
+    /// the Form — the solver has to reconcile both branches against every
+    /// enclosing generic parameter.
+    private func vehicleLabel(_ vehicle: Vehicle) -> String {
+        vehicle.isActive ? vehicle.name : "\(vehicle.name) (archived)"
+    }
+
+    /// The Save button's action: check the on-screen copy is still fresh,
+    /// then either save or raise the matching alert.
+    ///
+    /// Lifted out of `body` because the type-checker could not solve the
+    /// enclosing expression in reasonable time. `body` is a single `some
+    /// View` expression covering the whole Form and toolbar, and every
+    /// closure inside it is part of that one solve; a method has an
+    /// explicit signature, so it gets checked on its own.
+    private func attemptSave() {
+        // This screen's `@State trip` was seeded once, when it was first
+        // pushed — it doesn't refresh just because the live trip changed
+        // while this screen stayed open. Two ways that happens: (1) it got
+        // locked elsewhere ("Apply locks now", or the automatic
+        // lockAfterDays sweep re-running on foreground), or (2)
+        // TripDetector's own brief-stop merge resumed and re-ended it under
+        // the SAME id with different final mileage — `endedAt` changing is
+        // the same cheap "this got re-ended" marker TripDetector's own
+        // geocode-backfill Task already uses for an identical check
+        // (round-14 adversarial review finding). `Store.updateTrip`'s merge
+        // already refuses to apply distance/type from a stale snapshot in
+        // either case, but saving straight through would give zero
+        // indication anything didn't apply (round-12/14 findings) — check
+        // freshness first.
+        let live: Trip? = store.trips.first { $0.id == trip.id }
+        if !isNew, live == nil {
+            // Not locked-elsewhere and not merely re-ended — the trip has
+            // been pulled OUT of store.trips entirely, which only happens
+            // when TripDetector's brief-stop merge reclaims it as an
+            // in-progress drive again (same reasoning NotificationManager's
+            // "back in progress" handling already relies on for the
+            // identical scenario). Saving now would fall through to
+            // Store.addTrip's un-merged fallback — bypassing every
+            // field-level protection this whole mechanism exists for — and
+            // then get silently clobbered again the moment the resumed
+            // drive truly ends. Block entirely rather than pretending to
+            // save (round-15 adversarial review finding).
+            showsInProgressAlert = true
+        } else if let live,
+                  (!isLocked && live.isLocked) || live.endedAt != trip.endedAt {
+            showsStaleLockAlert = true
+        } else {
+            onSave(trip)
+            dismiss()
+        }
+    }
+
+    /// The read-only banner shown on a locked trip.
+    @ViewBuilder
+    private var lockedBanner: some View {
+        if isLocked {
+            Section {
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Locked entry").bold()
+                        if let lockedAt = trip.lockedAt {
+                            Text("Locked \(lockedAt.formatted(date: .abbreviated, time: .shortened))")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                                .padding(.top, 4)
                         }
-                    } icon: {
-                        Image(systemName: "lock.fill").foregroundColor(.orange)
+                        Text("Mileage, date, vehicle and type can no longer be edited. Edits to purpose, customer and notes are recorded in the compliance audit log.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.top, 4)
                     }
+                } icon: {
+                    Image(systemName: "lock.fill").foregroundColor(.orange)
                 }
             }
+        }
+    }
 
-            Section("Type") {
-                Picker("Type", selection: $trip.type) {
-                    ForEach(TripType.allCases) { type in
-                        Text(type.label).tag(type)
-                    }
-                }
-                .pickerStyle(.segmented)
-                // Type directly determines the reimbursement figure the
-                // lock exists to freeze (Trip.reimbursement() pays a
-                // different rate — or zero — per type), so it must be
-                // exactly as immutable as Distance below once locked.
-                // Previously only Distance had this guard, leaving the one
-                // field that actually controls the reported €-amount fully
-                // editable on an already-reported, locked trip (round-12
-                // adversarial review finding).
-                .disabled(isLocked)
-            }
-
-            Section("Vehicle") {
-                Picker("Vehicle", selection: $trip.vehicleID) {
-                    ForEach(vehicleOptions) { vehicle in
-                        Text(vehicle.isActive ? vehicle.name : "\(vehicle.name) (archived)").tag(vehicle.id)
-                    }
-                }
-                .disabled(isLocked)
-            } footer: {
-                // Auto-detection's Bluetooth-fallback path can occasionally
-                // guess the wrong vehicle when no BT pairing is available
-                // (first drive in an unpaired car, a rental, a BT hiccup at
-                // start) — TripDetector logs a "verify this trip's vehicle
-                // is correct" warning to the Detection Log when that
-                // happens, but until now there was no way to actually act
-                // on it: this screen had no vehicle control at all, so a
-                // mis-guessed vehicle silently and permanently misattributed
-                // the trip to the wrong reimbursement pool or company-car
-                // logbook (round-16 adversarial review finding).
-                if !isLocked {
-                    Text("Auto-detected trips occasionally guess the wrong vehicle if Bluetooth didn't pair. Correct it here if needed.")
-                        .font(.caption)
+    /// Business / commute / private. Frozen once locked, because
+    /// type is what sets the reimbursement rate the lock exists to fix.
+    @ViewBuilder
+    private var typeSection: some View {
+        Section("Type") {
+            Picker("Type", selection: $trip.type) {
+                ForEach(TripType.allCases) { type in
+                    Text(type.label).tag(type)
                 }
             }
-
-            Section("Details") {
-                TextField("Customer / destination", text: $trip.customerName)
-                TextField("Purpose", text: $trip.purpose)
-                TextField("Notes", text: $trip.notes, axis: .vertical)
-            }
-
-            Section("Route") {
-                HStack {
-                    Text("Distance")
-                    Spacer()
-                    TextField("0", value: $trip.distanceKm, format: .number)
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
-                        .disabled(isLocked)
-                        .foregroundColor(isLocked ? .secondary : .primary)
-                    Text("km").foregroundColor(.secondary)
-                }
-                if !trip.startAddress.isEmpty {
-                    LabeledContent("From", value: trip.startAddress)
-                }
-                if !trip.endAddress.isEmpty {
-                    LabeledContent("To", value: trip.endAddress)
-                }
-                LabeledContent("Date", value: trip.startedAt.formatted(date: .abbreviated, time: .shortened))
-            }
-
-            if !tripPoints.isEmpty {
-                Section("GPS track") {
-                    Button {
-                        showsFullScreenMap = true
-                    } label: {
-                        TripMapView(points: tripPoints)
-                            .frame(height: 180)
-                            .listRowInsets(EdgeInsets())
-                            .allowsHitTesting(false)
-                    }
-                    .buttonStyle(.plain)
-                    Text("\(tripPoints.count) points recorded · tap the map to zoom in")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-
-            // Hidden until the trip is actually saved: `receipts.trip_id`
-            // has a real foreign key to trips(id), and a brand-new trip's
-            // row doesn't exist yet until `onSave`/`store.addTrip` runs —
-            // attaching a receipt from this screen before that would
-            // upload the photo to Storage and then fail the insert every
-            // single time, with a generic error giving no hint why (round-8
+            .pickerStyle(.segmented)
+            // Type directly determines the reimbursement figure the
+            // lock exists to freeze (Trip.reimbursement() pays a
+            // different rate — or zero — per type), so it must be
+            // exactly as immutable as Distance below once locked.
+            // Previously only Distance had this guard, leaving the one
+            // field that actually controls the reported €-amount fully
+            // editable on an already-reported, locked trip (round-12
             // adversarial review finding).
-            if isNew {
-                Section {
-                    Text("Save this trip first, then add receipts from the trip's detail screen.")
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
-                }
-            } else {
-                ReceiptsSection(tripID: trip.id, receipts: $receipts)
-            }
+            .disabled(isLocked)
+        }
+    }
 
-            if isOwnCarTrip {
-                Section {
-                    LabeledContent("Reimbursement",
-                                   value: String(format: "€ %.2f", trip.reimbursement(
-                                    businessRate: store.settings.reimbursementRate,
-                                    commuteRate: store.settings.commuteRate
-                                   )))
+    /// Vehicle reassignment, including archived vehicles.
+    @ViewBuilder
+    private var vehicleSection: some View {
+        // Builder form, not `Section("Vehicle") { ... } footer: { ... }`:
+        // the string-title convenience is Section(_:content:) and takes no
+        // footer, so the title has to move into an explicit header.
+        Section {
+            Picker("Vehicle", selection: $trip.vehicleID) {
+                ForEach(vehicleOptions) { vehicle in
+                    Text(vehicleLabel(vehicle)).tag(vehicle.id)
                 }
             }
+            .disabled(isLocked)
+        } header: {
+            Text("Vehicle")
+        } footer: {
+            // Auto-detection's Bluetooth-fallback path can occasionally
+            // guess the wrong vehicle when no BT pairing is available
+            // (first drive in an unpaired car, a rental, a BT hiccup at
+            // start) — TripDetector logs a "verify this trip's vehicle
+            // is correct" warning to the Detection Log when that
+            // happens, but until now there was no way to actually act
+            // on it: this screen had no vehicle control at all, so a
+            // mis-guessed vehicle silently and permanently misattributed
+            // the trip to the wrong reimbursement pool or company-car
+            // logbook (round-16 adversarial review finding).
+            if !isLocked {
+                Text("Auto-detected trips occasionally guess the wrong vehicle if Bluetooth didn't pair. Correct it here if needed.")
+                    .font(.caption)
+            }
+        }
+    }
+
+    /// Free-text fields, editable even when locked (audit-logged).
+    @ViewBuilder
+    private var detailsSection: some View {
+        Section("Details") {
+            TextField("Customer / destination", text: $trip.customerName)
+            TextField("Purpose", text: $trip.purpose)
+            TextField("Notes", text: $trip.notes, axis: .vertical)
+        }
+    }
+
+    /// Distance, addresses and date.
+    @ViewBuilder
+    private var routeSection: some View {
+        Section("Route") {
+            HStack {
+                Text("Distance")
+                Spacer()
+                TextField("0", value: $trip.distanceKm, format: .number)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .disabled(isLocked)
+                    .foregroundColor(isLocked ? .secondary : .primary)
+                Text("km").foregroundColor(.secondary)
+            }
+            if !trip.startAddress.isEmpty {
+                LabeledContent("From", value: trip.startAddress)
+            }
+            if !trip.endAddress.isEmpty {
+                LabeledContent("To", value: trip.endAddress)
+            }
+            LabeledContent("Date", value: trip.startedAt.formatted(date: .abbreviated, time: .shortened))
+        }
+    }
+
+    /// The recorded track, when the trip has one.
+    @ViewBuilder
+    private var gpsTrackSection: some View {
+        if !tripPoints.isEmpty {
+            Section("GPS track") {
+                Button {
+                    showsFullScreenMap = true
+                } label: {
+                    TripMapView(points: tripPoints)
+                        .frame(height: 180)
+                        .listRowInsets(EdgeInsets())
+                        .allowsHitTesting(false)
+                }
+                .buttonStyle(.plain)
+                Text("\(tripPoints.count) points recorded · tap the map to zoom in")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
+    /// Receipts, or the explanation of why they aren't available yet.
+    @ViewBuilder
+    private var receiptsArea: some View {
+        // Hidden until the trip is actually saved: `receipts.trip_id`
+        // has a real foreign key to trips(id), and a brand-new trip's
+        // row doesn't exist yet until `onSave`/`store.addTrip` runs —
+        // attaching a receipt from this screen before that would
+        // upload the photo to Storage and then fail the insert every
+        // single time, with a generic error giving no hint why (round-8
+        // adversarial review finding).
+        if isNew {
+            Section {
+                Text("Save this trip first, then add receipts from the trip's detail screen.")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+        } else {
+            ReceiptsSection(tripID: trip.id, receipts: $receipts)
+        }
+    }
+
+    /// The €-figure, own-car trips only.
+    @ViewBuilder
+    private var reimbursementSection: some View {
+        if isOwnCarTrip {
+            Section {
+                LabeledContent("Reimbursement",
+                               value: String(format: "€ %.2f", trip.reimbursement(
+                                businessRate: store.settings.reimbursementRate,
+                                commuteRate: store.settings.commuteRate
+                               )))
+            }
+        }
+    }
+
+    var body: some View {
+        Form {
+            lockedBanner
+            typeSection
+            vehicleSection
+            detailsSection
+            routeSection
+            gpsTrackSection
+            receiptsArea
+            reimbursementSection
         }
         .navigationTitle(isNew ? "Classify trip" : "Edit trip")
         .navigationBarTitleDisplayMode(.inline)
         .keyboardDoneToolbar()
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button {
-                    // This screen's `@State trip` was seeded once, when it
-                    // was first pushed — it doesn't refresh just because the
-                    // live trip changed while this screen stayed open. Two
-                    // ways that happens: (1) it got locked elsewhere
-                    // ("Apply locks now", or the automatic lockAfterDays
-                    // sweep re-running on foreground), or (2) TripDetector's
-                    // own brief-stop merge resumed and re-ended it under the
-                    // SAME id with different final mileage — `endedAt`
-                    // changing is the same cheap "this got re-ended" marker
-                    // TripDetector's own geocode-backfill Task already uses
-                    // for an identical check (round-14 adversarial review
-                    // finding). `Store.updateTrip`'s merge already refuses
-                    // to apply distance/type from a stale snapshot in
-                    // either case, but saving straight through would give
-                    // zero indication anything didn't apply (round-12/14
-                    // findings) — check freshness first.
-                    let live = store.trips.first(where: { $0.id == trip.id })
-                    if !isNew, live == nil {
-                        // Not locked-elsewhere and not merely re-ended —
-                        // the trip has been pulled OUT of store.trips
-                        // entirely, which only happens when TripDetector's
-                        // brief-stop merge reclaims it as an in-progress
-                        // drive again (same reasoning NotificationManager's
-                        // "back in progress" handling already relies on for
-                        // the identical scenario). Saving now would fall
-                        // through to Store.addTrip's un-merged fallback —
-                        // bypassing every field-level protection this whole
-                        // mechanism exists for — and then get silently
-                        // clobbered again the moment the resumed drive
-                        // truly ends. Block entirely rather than pretending
-                        // to save (round-15 adversarial review finding).
-                        showsInProgressAlert = true
-                    } else if let live,
-                       (!isLocked && live.isLocked) || live.endedAt != trip.endedAt {
-                        showsStaleLockAlert = true
-                    } else {
-                        onSave(trip)
-                        dismiss()
-                    }
-                } label: {
-                    Text("Save")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
-                        .background(Theme.brandGradient)
-                        .clipShape(Capsule())
+                Button(action: attemptSave) {
+                    SaveButtonLabel()
                 }
             }
             if isNew {
@@ -295,5 +352,26 @@ struct TripEditor: View {
                     }
             }
         }
+    }
+}
+
+/// The Save button's pill label, pulled out of `body`.
+///
+/// Inline, this six-modifier chain sat inside an already very large
+/// `body`, and the type-checker gave up on the whole expression:
+/// "unable to type-check this expression in reasonable time". The chain
+/// is not unusual on its own — it is the size of the enclosing
+/// expression that defeats the solver. Giving it its own `View` caps the
+/// work at this small scope, and the leading-dot shorthands are spelled
+/// out so nothing has to be inferred from context.
+private struct SaveButtonLabel: View {
+    var body: some View {
+        Text("Save")
+            .font(Font.subheadline.weight(.semibold))
+            .foregroundColor(Color.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(Theme.brandGradient)
+            .clipShape(Capsule())
     }
 }
