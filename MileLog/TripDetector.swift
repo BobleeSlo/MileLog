@@ -540,9 +540,13 @@ final class TripDetector: NSObject, ObservableObject {
         }
 
         verificationDeadline?.invalidate()
+        // Scheduled on the main run loop, so the block runs on the main
+        // thread: assumeIsolated runs it there directly. The previous Task
+        // hop captured a weak var across a concurrency boundary, which is an
+        // error in Swift 6 mode.
         verificationDeadline = Timer.scheduledTimer(withTimeInterval: verificationSeconds,
                                                     repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.finishVerification() }
+            MainActor.assumeIsolated { self?.finishVerification() }
         }
         log.log("Verification started — need speed > \(Int(speedConfirmKmh)) km/h, or automotive activity with GPS movement.")
     }
@@ -784,15 +788,14 @@ final class TripDetector: NSObject, ObservableObject {
 
     private func startAuditTimer() {
         auditTimer?.invalidate()
-        // The Timer fires on the current run loop; we don't capture self in
-        // the outer closure (no reference) — the inner Task captures self
-        // explicitly weak, which silences the Swift 6 'captured var self'
-        // warning that would fire on an implicit self.
+        // Scheduled from main-actor code on the main run loop, so the block
+        // runs on the main thread. Weak capture on the outer closure, and
+        // assumeIsolated instead of a Task hop: the old form implicitly
+        // captured self strongly outside and weakly inside, and referenced a
+        // captured weak var from concurrently-executing code.
         auditTimer = Timer.scheduledTimer(withTimeInterval: auditIntervalSeconds,
-                                          repeats: true) { _ in
-            Task { @MainActor [weak self] in
-                self?.auditActiveTrip()
-            }
+                                          repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.auditActiveTrip() }
         }
     }
 
@@ -1532,13 +1535,8 @@ final class TripDetector: NSObject, ObservableObject {
     }
 
     private static func reverseGeocode(_ coord: CLLocationCoordinate2D) async -> String {
-        let geocoder = CLGeocoder()
         let location = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
-        if let placemark = try? await geocoder.reverseGeocodeLocation(location).first {
-            let parts = [placemark.thoroughfare, placemark.locality].compactMap { $0 }
-            return parts.joined(separator: ", ")
-        }
-        return ""
+        return await Geocoding.shortAddress(for: location)
     }
 
     // MARK: - Audio route changes (vehicle identification only — never ends a trip)

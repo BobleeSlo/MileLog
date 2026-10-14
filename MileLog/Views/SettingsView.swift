@@ -683,12 +683,10 @@ struct SettingsView: View {
         isGeocoding = true
         defer { isGeocoding = false }
         geocodeStatus = "Resolving…"
-        let geocoder = CLGeocoder()
         var status: [String] = []
 
         if !homeInput.isEmpty {
-            if let placemark = try? await geocoder.geocodeAddressString(homeInput).first,
-               let coord = placemark.location?.coordinate {
+            if let coord = await Geocoding.coordinate(for: homeInput) {
                 store.settings.homeAddress = homeInput
                 store.settings.homeLat = coord.latitude
                 store.settings.homeLng = coord.longitude
@@ -699,8 +697,7 @@ struct SettingsView: View {
         }
 
         if !workInput.isEmpty {
-            if let placemark = try? await geocoder.geocodeAddressString(workInput).first,
-               let coord = placemark.location?.coordinate {
+            if let coord = await Geocoding.coordinate(for: workInput) {
                 store.settings.workAddress = workInput
                 store.settings.workLat = coord.latitude
                 store.settings.workLng = coord.longitude
