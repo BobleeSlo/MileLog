@@ -13,6 +13,7 @@ struct TripsListView: View {
     /// Set once the syncing state has been on screen long enough that a
     /// bare spinner stops being reassuring — see `syncingState`.
     @State private var syncIsSlow = false
+    @State private var showsMergeTrips = false
 
     var body: some View {
         NavigationStack {
@@ -36,6 +37,24 @@ struct TripsListView: View {
             }
             .navigationTitle("Trips")
             .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                // Only shown while there is something to merge, so it doubles
+                // as the signal that split trips exist.
+                let splitCount = store.mergeCandidates.count
+                if splitCount > 0 {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            showsMergeTrips = true
+                        } label: {
+                            Label("\(splitCount) split", systemImage: "arrow.triangle.merge")
+                                .labelStyle(.titleAndIcon)
+                        }
+                    }
+                }
+            }
+            .sheet(isPresented: $showsMergeTrips) {
+                MergeTripsView()
+            }
         }
     }
 

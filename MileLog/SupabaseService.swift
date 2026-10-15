@@ -186,6 +186,16 @@ final class SupabaseService: ObservableObject {
         try await client.from("trips").delete().eq("id", value: id).execute()
     }
 
+    /// Repoints a trip's GPS points and receipts at another trip. Both child
+    /// tables cascade on delete, so this has to run before the source trip's
+    /// row is removed when two fragments are merged — otherwise the merged
+    /// trip loses half its map and any receipts attached to the second part.
+    func moveTripChildren(from source: UUID, to target: UUID) async throws {
+        let patch = TripIDPatchDTO(trip_id: target)
+        try await client.from("trip_points").update(patch).eq("trip_id", value: source).execute()
+        try await client.from("receipts").update(patch).eq("trip_id", value: source).execute()
+    }
+
     // MARK: - User settings
 
     func pushSettings(_ settings: UserSettings) async throws {

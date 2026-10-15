@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import CoreLocation
 import SwiftUI   // for Array.remove(atOffsets:) used by ForEach.onDelete bridging
 
 /// Local-first data store. Persists vehicles, trips and settings as JSON in the
@@ -476,6 +477,123 @@ final class Store: ObservableObject {
                 for id in ids { try? await supabase.deleteTrip(id: id) }
             }
         }
+    }
+
+    // MARK: - Merging split trips
+
+    /// Two consecutive trips that look like one drive split by a short stop
+    /// or a tracking gap: same vehicle, nothing else driven in between, the
+    /// second starting within `mergeMaxGapMinutes` of the first ending and
+    /// within `mergeMaxGapMetres` of where it ended. Locked trips never
+    /// qualify — they are the tamper-evident record.
+    struct MergeCandidate: Identifiable, Hashable {
+        let first: Trip
+        let second: Trip
+        var id: String { "\(first.id.uuidString)-\(second.id.uuidString)" }
+        var gapMinutes: Double { second.startedAt.timeIntervalSince(first.endedAt) / 60 }
+        var gapMetres: Double? { Store.gapMetres(first, second) }
+    }
+
+    static let mergeMaxGapMinutes: Double = 10
+    static let mergeMaxGapMetres: Double = 300
+
+    /// Straight-line distance from where `first` ended to where `second`
+    /// started, or nil when either coordinate is missing.
+    static func gapMetres(_ first: Trip, _ second: Trip) -> Double? {
+        guard let aLat = first.endLat, let aLng = first.endLng,
+              let bLat = second.startLat, let bLng = second.startLng else { return nil }
+        return CLLocation(latitude: aLat, longitude: aLng)
+            .distance(from: CLLocation(latitude: bLat, longitude: bLng))
+    }
+
+    /// Every adjacent pair that qualifies, oldest first. Adjacency is by
+    /// start time across ALL vehicles, so a trip in another car in between
+    /// breaks the pair.
+    var mergeCandidates: [MergeCandidate] {
+        let sorted = trips.sorted { $0.startedAt < $1.startedAt }
+        return zip(sorted, sorted.dropFirst()).compactMap { a, b in
+            guard a.vehicleID == b.vehicleID, !a.isLocked, !b.isLocked else { return nil }
+            let gap = b.startedAt.timeIntervalSince(a.endedAt) / 60
+            // A minute of tolerance below zero: a start anchored back to the
+            // parking spot can land fractionally before the previous end.
+            guard gap >= -1, gap <= Self.mergeMaxGapMinutes else { return nil }
+            guard let metres = Self.gapMetres(a, b), metres <= Self.mergeMaxGapMetres else { return nil }
+            return MergeCandidate(first: a, second: b)
+        }
+    }
+
+    // nonisolated: the project defaults every type to the main actor, and an
+    // Error has to be usable from any context.
+    nonisolated enum MergeError: LocalizedError {
+        case tripsChanged
+        var errorDescription: String? {
+            "These trips changed since the list was shown — reopen it and try again."
+        }
+    }
+
+    /// Merges the chosen pairs in time order. A chain A+B, B+C ends up as one
+    /// trip: once B is absorbed into A, the B+C pair continues from A.
+    /// Returns how many merges were made. Stops at the first failure; every
+    /// merge before it is complete (cloud and local), nothing after it runs.
+    @discardableResult
+    func mergeTrips(_ pairs: [MergeCandidate]) async throws -> Int {
+        var absorbedInto: [UUID: UUID] = [:]
+        func resolve(_ id: UUID) -> UUID {
+            var current = id
+            while let next = absorbedInto[current] { current = next }
+            return current
+        }
+        var count = 0
+        for pair in pairs.sorted(by: { $0.first.startedAt < $1.first.startedAt }) {
+            let targetID = resolve(pair.first.id)
+            try await mergeTrip(pair.second.id, into: targetID)
+            absorbedInto[pair.second.id] = targetID
+            count += 1
+        }
+        return count
+    }
+
+    /// Appends trip `sourceID` onto trip `targetID`: the target keeps its
+    /// start, classification and id; it takes the source's end, and its
+    /// distance becomes both distances plus the straight-line gap between
+    /// them. Cloud first — upsert the merged row, move the source's GPS
+    /// points and receipts across, delete the source — and only then the
+    /// local copy, so a failure part-way leaves the local data untouched.
+    private func mergeTrip(_ sourceID: UUID, into targetID: UUID) async throws {
+        guard let target = trips.first(where: { $0.id == targetID }),
+              let source = trips.first(where: { $0.id == sourceID }),
+              target.vehicleID == source.vehicleID,
+              !target.isLocked, !source.isLocked
+        else { throw MergeError.tripsChanged }
+
+        var merged = target
+        merged.endedAt = source.endedAt
+        merged.endAddress = source.endAddress
+        merged.endLat = source.endLat
+        merged.endLng = source.endLng
+        merged.distanceKm = target.distanceKm + source.distanceKm
+            + (Self.gapMetres(target, source) ?? 0) / 1000
+        if merged.purpose.isEmpty { merged.purpose = source.purpose }
+        if merged.customerName.isEmpty { merged.customerName = source.customerName }
+        merged.notes = [target.notes, source.notes].filter { !$0.isEmpty }.joined(separator: "\n")
+        merged.reviewedAt = target.reviewedAt ?? source.reviewedAt
+
+        if let supabase {
+            try await supabase.pushTrip(merged)
+            try await supabase.moveTripChildren(from: source.id, to: target.id)
+            try await supabase.deleteTrip(id: source.id)
+        }
+
+        trips.removeAll { $0.id == source.id }
+        if let idx = trips.firstIndex(where: { $0.id == target.id }) {
+            trips[idx] = merged
+        }
+        deletedTripIDs.insert(source.id)
+        save()
+        detectionLog?.log(String(format: "Merged split trip: %@ %.1f km + %.1f km → %.1f km.",
+                                 target.startedAt.formatted(date: .abbreviated, time: .shortened),
+                                 target.distanceKm, source.distanceKm, merged.distanceKm),
+                          level: .info)
     }
 
     /// Ids the user has deliberately deleted, persisted so `initialSync`'s
