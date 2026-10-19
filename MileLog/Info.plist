@@ -40,6 +40,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Take a photo of a receipt to attach it to a trip.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>MileLog uses Face ID to lock the app so only you can see your trips.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>MileLog records trips in the background so you do not have to start them manually.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
