@@ -37,8 +37,10 @@ extension View {
 struct PrettyStepper: View {
     @Binding var value: Int
     let range: ClosedRange<Int>
-    let label: String
-    let unit: String
+    // LocalizedStringKey, not String: a plain String is shown as-is, so these
+    // labels stayed English in every language.
+    let label: LocalizedStringKey
+    let unit: LocalizedStringKey
 
     var body: some View {
         HStack {
@@ -69,9 +71,9 @@ struct PrettyStepper: View {
                         .contentShape(Rectangle())
                 }
                 .disabled(value <= range.lowerBound)
-                .accessibilityLabel("Decrease \(label)")
+                .accessibilityLabel(Text("Decrease \(Text(label))"))
 
-                Text("\(value) \(unit)")
+                Text("\(value) \(Text(unit))")
                     .font(.body.monospacedDigit())
                     .fontWeight(.medium)
                     .frame(minWidth: 56)
@@ -85,7 +87,7 @@ struct PrettyStepper: View {
                         .contentShape(Rectangle())
                 }
                 .disabled(value >= range.upperBound)
-                .accessibilityLabel("Increase \(label)")
+                .accessibilityLabel(Text("Increase \(Text(label))"))
             }
             .buttonStyle(.plain)
             .foregroundColor(.accentColor)
@@ -116,7 +118,8 @@ struct PrettyStepper: View {
 // MARK: - SectionHeaderLabel (icon + title for Form section headers)
 
 struct SectionHeaderLabel: View {
-    let title: String
+    /// LocalizedStringKey so section headers are translated (see PrettyStepper).
+    let title: LocalizedStringKey
     let systemImage: String
 
     var body: some View {

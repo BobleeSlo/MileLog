@@ -9,6 +9,7 @@ struct MileLogApp: App {
     @StateObject private var notifications: NotificationManager
     @StateObject private var detector: TripDetector
     @StateObject private var appLock = AppLock()
+    @StateObject private var language = AppLanguage()
 
     init() {
         // Build the dependency graph manually so the detector can hold non-owning
@@ -56,6 +57,9 @@ struct MileLogApp: App {
                 .environmentObject(notifications)
                 .environmentObject(detector)
                 .environmentObject(appLock)
+                .environmentObject(language)
+                // Switches every SwiftUI `Text` to the chosen language at once.
+                .environment(\.locale, language.locale)
         }
     }
 }
@@ -149,7 +153,10 @@ struct RootView: View {
             // every foreground narrows the window for the stale-@State-
             // detail-screen scenario `updateTrip` now defends against
             // (round-11 adversarial review finding).
-            if phase == .active { store.applyAutomaticLocks() }
+            if phase == .active {
+                store.applyAutomaticLocks()
+                store.retryUnsyncedTrips()
+            }
         }
     }
 

@@ -109,6 +109,13 @@ final class Store: ObservableObject {
     /// Read-only access for collaborators (TripDetector pushes GPS points + receipts).
     var supabaseService: SupabaseService? { supabase }
 
+    /// Trips whose last push failed. Retried after the next successful push
+    /// and whenever the app comes to the foreground, instead of only at the
+    /// next launch's full sync. In memory only: that full sync re-pushes
+    /// every trip anyway, so nothing is lost if the app is killed.
+    private var unsyncedTripIDs: Set<UUID> = []
+    private var isRetryingUnsyncedTrips = false
+
     /// Set by the app on launch (weak — TripDetector already holds a strong
     /// reference to this Store, so this is the non-owning direction). Lets
     /// deleteVehicle refuse to hard-delete a vehicle that's the subject of
@@ -901,7 +908,9 @@ final class Store: ObservableObject {
         await flushPendingAuditEntries()
 
         for vehicle in vehicles { try? await supabase.pushVehicle(vehicle) }
-        for trip in trips       { try? await supabase.pushTrip(trip) }
+        for trip in trips {
+            if (try? await supabase.pushTrip(trip)) != nil { markTripSynced(trip.id) }
+        }
         // Only assert local settings over the cloud once this device has
         // reconciled settings with THIS account (see
         // `settingsReconciledUserID`). Before that we may be holding
@@ -1013,6 +1022,8 @@ final class Store: ObservableObject {
         Task {
             do {
                 try await supabase.pushTrip(trip)
+                markTripSynced(trip.id)
+                retryUnsyncedTrips()
             } catch {
                 // Round 20 reacted to a rejected push by pulling the
                 // authoritative row and overwriting local state if it
@@ -1037,8 +1048,42 @@ final class Store: ObservableObject {
                 // keeps retrying with the local edit intact regardless —
                 // succeeding once connectivity returns, or failing (and
                 // logging) again if it's a genuine, permanent rejection.
-                detectionLog?.log("A trip failed to sync (offline, or rejected if locked/changed on another device) — will keep retrying.",
+                unsyncedTripIDs.insert(trip.id)
+                detectionLog?.log("A trip failed to sync (offline, or rejected if locked/changed on another device) — \(unsyncedTripIDs.count) waiting; retrying after the next successful sync or when MileLog is opened.",
                                    level: .warning)
+            }
+        }
+    }
+
+    /// Clears a trip from the retry set, logging when it had been waiting.
+    private func markTripSynced(_ id: UUID) {
+        guard unsyncedTripIDs.remove(id) != nil else { return }
+        let waiting = unsyncedTripIDs.count
+        detectionLog?.log(waiting == 0
+                          ? "Trip synced after retry — all trips are backed up."
+                          : "Trip synced after retry — \(waiting) still waiting.",
+                          level: .info)
+    }
+
+    /// Re-pushes trips whose last push failed. Stops at the first failure
+    /// (still offline) and leaves the rest for the next attempt.
+    func retryUnsyncedTrips() {
+        guard let supabase, !unsyncedTripIDs.isEmpty, !isRetryingUnsyncedTrips else { return }
+        isRetryingUnsyncedTrips = true
+        Task {
+            defer { isRetryingUnsyncedTrips = false }
+            for id in unsyncedTripIDs {
+                // Gone locally (deleted, or another account signed in): nothing to push.
+                guard let trip = trips.first(where: { $0.id == id }) else {
+                    unsyncedTripIDs.remove(id)
+                    continue
+                }
+                do {
+                    try await supabase.pushTrip(trip)
+                    markTripSynced(id)
+                } catch {
+                    return
+                }
             }
         }
     }

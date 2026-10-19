@@ -8,6 +8,7 @@ struct SettingsView: View {
     @EnvironmentObject var detector: TripDetector
     @EnvironmentObject var location: LocationManager
     @EnvironmentObject var appLock: AppLock
+    @EnvironmentObject var language: AppLanguage
     @State private var exportURL: URL?
     @State private var lockResultMessage: String?
 
@@ -370,6 +371,24 @@ struct SettingsView: View {
                     }
                 } header: {
                     SectionHeaderLabel(title: "Security", systemImage: "lock.shield")
+                }
+
+                // MARK: Language
+                Section {
+                    Picker(selection: Binding(get: { language.code },
+                                              set: { language.select($0) })) {
+                        Text("Same as iPhone").tag(AppLanguage.system)
+                        ForEach(language.available, id: \.self) { code in
+                            Text(verbatim: AppLanguage.nativeName(for: code)).tag(code)
+                        }
+                    } label: {
+                        Label("App language", systemImage: "globe")
+                    }
+                } header: {
+                    SectionHeaderLabel(title: "Language", systemImage: "character.bubble")
+                } footer: {
+                    Text("Notifications and PDF reports switch language the next time MileLog starts.")
+                        .font(.caption)
                 }
 
                 // MARK: Account

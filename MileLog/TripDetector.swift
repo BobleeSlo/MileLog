@@ -179,6 +179,12 @@ final class TripDetector: NSObject, ObservableObject {
     //   - movingSpeedKmh: at/above this the car counts as "moving" and
     //     `lastMovementAt` is refreshed.
     private let movingSpeedKmh: Double = 3
+    //   - minStepMetres / jitterAccuracyFactor / engineOffMinStepMetres:
+    //     how far a fix must move before it counts as travel when no speed
+    //     reading backs it up — see `jitterRadius(for:trip:movingBySpeed:)`.
+    nonisolated private static let minStepMetres: CLLocationDistance = 10
+    nonisolated private static let jitterAccuracyFactor: Double = 1.5
+    nonisolated private static let engineOffMinStepMetres: CLLocationDistance = 30
 
     // GPS-blackout protection: a tunnel, underground garage, or a plain
     // background-execution gap (iOS can suspend the app for minutes at a
@@ -447,7 +453,7 @@ final class TripDetector: NSObject, ObservableObject {
         let currentBT = AudioRoute.currentBluetoothOutput()
         let btStatus: String
         if let pairedUID = trip.audioDeviceUID {
-            if currentBT?.uid == pairedUID {
+            if AudioRoute.sameDevice(currentBT?.uid ?? "", pairedUID) {
                 btStatus = "BT still connected (\(currentBT?.name ?? "?"))"
             } else if let cur = currentBT {
                 btStatus = "BT changed to \(cur.name)"
@@ -905,7 +911,7 @@ final class TripDetector: NSObject, ObservableObject {
 
         if stationaryMin >= timeout {
             if carBluetoothGone && timeout < configuredTimeout {
-                log.log(String(format: "Car Bluetooth disconnected and stationary %.0f min — treating as engine off.",
+                log.log(String(format: "Car Bluetooth disconnected and stationary %.1f min — treating as engine off.",
                                stationaryMin), level: .info)
             }
             // GPS-blackout check: "no location updates" and "genuinely
@@ -920,7 +926,7 @@ final class TripDetector: NSObject, ObservableObject {
                 log.log(String(format: "AUDIT: %.0f min stationary by GPS timing, but CoreMotion confirms automotive activity %.0fs ago — likely a GPS dead zone, not ending.",
                                stationaryMin, Date().timeIntervalSince(lastAuto)), level: .info)
             } else {
-                log.log(String(format: "AUDIT: ending trip — stationary %.0f min >= %.0f min timeout.",
+                log.log(String(format: "AUDIT: ending trip — stationary %.1f min >= %.0f min timeout.",
                                stationaryMin, timeout), level: .info)
                 // A post-relaunch closure is unconfirmed — the app was dead
                 // for the whole gap, so "stationary" here just means
@@ -955,7 +961,7 @@ final class TripDetector: NSObject, ObservableObject {
                 }
                 // Backdate endedAt to when the car actually stopped, not to
                 // whenever this audit finally got to run — see endTrip's doc.
-                endTrip(reason: "stationary \(Int(stationaryMin)) min", at: trip.lastMovementAt)
+                endTrip(reason: String(format: "stationary %.1f min", stationaryMin), at: trip.lastMovementAt)
                 return
             }
         }
@@ -1002,7 +1008,7 @@ final class TripDetector: NSObject, ObservableObject {
             manager.pausesLocationUpdatesAutomatically ? "ON" : "off",
             ProcessInfo.processInfo.isLowPowerModeEnabled ? "ON" : "off")
 
-        log.log(String(format: "AUDIT heartbeat: %.1f km · v %.0f km/h · %.0f min since movement (ends at %.0f) · BT %@ · motion %@ · %@ · %@",
+        log.log(String(format: "AUDIT heartbeat: %.1f km · v %.0f km/h · %.1f min since movement (ends at %.0f) · BT %@ · motion %@ · %@ · %@",
                        trip.distanceKm,
                        trip.lastSpeedKmh,
                        stationaryMin,
@@ -1226,7 +1232,7 @@ final class TripDetector: NSObject, ObservableObject {
         // two vehicles sharing a UID. Apply the same ambiguity refusal
         // already used for the name-match fallback below, rather than
         // silently picking .first (round-9 adversarial review finding).
-        let uidMatches = pool.filter { !$0.bluetoothUID.isEmpty && $0.bluetoothUID == device.uid }
+        let uidMatches = pool.filter { AudioRoute.sameDevice($0.bluetoothUID, device.uid) }
         if uidMatches.count == 1 {
             return uidMatches[0]
         }
@@ -1238,9 +1244,22 @@ final class TripDetector: NSObject, ObservableObject {
 
         let nameMatches = pool.filter { !$0.bluetoothName.isEmpty && $0.bluetoothName == device.name }
         if nameMatches.count == 1 {
-            log.log("Vehicle matched by BT name only (no UID match): '\(device.name)' → \(nameMatches[0].name).",
-                    level: .warning)
-            return nameMatches[0]
+            var vehicle = nameMatches[0]
+            // The head unit's UID can change (re-pairing, iOS updates). The
+            // name alone is unique among active vehicles here and no vehicle
+            // holds this UID, so adopt it — the next drive matches by UID
+            // again instead of falling back to the name every time.
+            if !device.uid.isEmpty, vehicle.bluetoothUID != device.uid {
+                let oldUID = vehicle.bluetoothUID
+                vehicle.bluetoothUID = device.uid
+                store.updateVehicle(vehicle)
+                log.log("Vehicle matched by BT name only: '\(device.name)' → \(vehicle.name). Updated its saved Bluetooth ID (\(oldUID.isEmpty ? "none" : "changed")) so future drives match by ID.",
+                        level: .info)
+            } else {
+                log.log("Vehicle matched by BT name only (no UID match): '\(device.name)' → \(vehicle.name).",
+                        level: .warning)
+            }
+            return vehicle
         }
         if nameMatches.count > 1 {
             log.log("AMBIGUOUS BT name '\(device.name)' matches \(nameMatches.count) active vehicles (\(nameMatches.map(\.name).joined(separator: ", "))) — refusing to guess. Re-pair each vehicle from its own Bluetooth connection so their IDs are unique.",
@@ -1282,7 +1301,7 @@ final class TripDetector: NSObject, ObservableObject {
         }
 
         let matchesCurrentPairing =
-            (trip.audioDeviceUID != nil && !trip.audioDeviceUID!.isEmpty && currentDevice.uid == trip.audioDeviceUID) ||
+            AudioRoute.sameDevice(currentDevice.uid, trip.audioDeviceUID ?? "") ||
             (trip.audioDeviceName != nil && !trip.audioDeviceName!.isEmpty && currentDevice.name == trip.audioDeviceName)
         guard !matchesCurrentPairing else {
             pendingSwitchVehicleID = nil
@@ -1410,7 +1429,17 @@ final class TripDetector: NSObject, ObservableObject {
            location.horizontalAccuracy < store.settings.energyMode.maxAcceptableGPSAccuracy {
             let previous = CLLocation(latitude: trip.lastLat, longitude: trip.lastLng)
             let metres = location.distance(from: previous)
-            if metres > 10 {
+            // Speed is checked first, then a jump counts as movement only once
+            // it clears the fix's own accuracy radius. A parked phone's fix
+            // wanders by about that much: field logs show a car parked with
+            // speed 0 km/h at 11–47 m accuracy, whose wobbles of more than 10 m
+            // kept resetting the stationary timer (trips ended 4–8 min after
+            // the engine went off instead of 2) and added 0.1–0.2 km per trip.
+            // Jitter jumps are not credited and do not move `lastLat/lastLng`, so
+            // slow real creeping still adds up once it leaves the radius.
+            let speedIsValid = location.speed >= 0
+            let movingBySpeed = speedIsValid && speedKmh >= movingSpeedKmh
+            if metres > jitterRadius(for: location, trip: trip, movingBySpeed: movingBySpeed) {
                 trip.distanceKm += metres / 1000.0
                 trip.lastLat = location.coordinate.latitude
                 trip.lastLng = location.coordinate.longitude
@@ -1425,12 +1454,13 @@ final class TripDetector: NSObject, ObservableObject {
                 // often reports speed = 0 at the moment of an update (snapshot
                 // between stop-and-go updates), so the speed check alone misses
                 // active driving and the audit then ends the trip as 'stationary'
-                // even though km kept piling up. Anything > 10m of actual GPS
-                // travel is irrefutable movement.
-                trip.lastMovementAt = Date()
+                // even though km kept piling up. Travel beyond the jitter
+                // radius is real movement. Stamped with the fix's own time,
+                // so a trip's backdated end lands on the moment the car stopped.
+                trip.lastMovementAt = min(location.timestamp, Date())
             }
-            if speedKmh >= movingSpeedKmh {   // genuinely moving
-                trip.lastMovementAt = Date()
+            if movingBySpeed {
+                trip.lastMovementAt = min(location.timestamp, Date())
             }
         }
         activeTrip = trip
@@ -1442,6 +1472,30 @@ final class TripDetector: NSObject, ObservableObject {
         // doesn't call this method while genuinely stationary anyway (no
         // update exceeds distanceFilter), so centralizing costs at most
         // ~60s of extra detection latency against a multi-minute timeout.
+    }
+
+    /// How far a fix must land from the last credited point before it counts
+    /// as travel. A fix with a real speed reading only needs the old 10 m
+    /// step; without one, it must clear 1.5× its accuracy radius. Once the
+    /// trip's car Bluetooth has gone (engine off), only a jump clearly beyond
+    /// GPS wobble counts without a speed reading: 2× accuracy, at least 30 m.
+    private func jitterRadius(for location: CLLocation, trip: ActiveTripState,
+                              movingBySpeed: Bool) -> CLLocationDistance {
+        let tripHasCarBluetooth = trip.audioDeviceUID != nil || (trip.audioDeviceName?.isEmpty == false)
+        let engineOff = tripHasCarBluetooth
+            && !AudioRoute.isPairedDevicePresent(uid: trip.audioDeviceUID, name: trip.audioDeviceName)
+        return Self.jitterRadius(accuracy: location.horizontalAccuracy,
+                                 movingBySpeed: movingBySpeed, engineOff: engineOff)
+    }
+
+    /// The rule itself, kept free of CoreLocation/Bluetooth state so it can
+    /// be unit-tested against readings from real detection logs.
+    nonisolated static func jitterRadius(accuracy: CLLocationAccuracy, movingBySpeed: Bool,
+                                         engineOff: Bool) -> CLLocationDistance {
+        if movingBySpeed { return minStepMetres }
+        let accuracy = max(0, accuracy)
+        if engineOff { return max(engineOffMinStepMetres, accuracy * 2) }
+        return max(minStepMetres, accuracy * jitterAccuracyFactor)
     }
 
     // MARK: - Trip end
@@ -1618,7 +1672,8 @@ final class TripDetector: NSObject, ObservableObject {
               let reason = AVAudioSession.RouteChangeReason(rawValue: raw) else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
-            self.log.log("Audio route change: \(reason)")
+            let output = AudioRoute.currentBluetoothOutput().map { "'\($0.name)'" } ?? "no Bluetooth output"
+            self.log.log("Audio route change: \(Self.describe(reason)) · now \(output)")
             if self.activeTrip == nil {
                 if reason == .newDeviceAvailable { self.startTripFromCarBluetooth() }
                 return
@@ -1641,6 +1696,21 @@ final class TripDetector: NSObject, ObservableObject {
                 self.lastAuditAt = .distantPast   // bypass dedupe for this check
                 self.auditActiveTrip()
             }
+        }
+    }
+
+    /// Readable name for the log; the raw enum prints as `rawValue: 3`.
+    private static func describe(_ reason: AVAudioSession.RouteChangeReason) -> String {
+        switch reason {
+        case .unknown:                  return "unknown"
+        case .newDeviceAvailable:       return "device connected"
+        case .oldDeviceUnavailable:     return "device disconnected"
+        case .categoryChange:           return "category change"
+        case .override:                 return "override"
+        case .wakeFromSleep:            return "wake from sleep"
+        case .noSuitableRouteForCategory: return "no suitable route"
+        case .routeConfigurationChange: return "route configuration change"
+        @unknown default:               return "reason \(reason.rawValue)"
         }
     }
 

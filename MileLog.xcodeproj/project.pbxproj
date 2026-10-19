@@ -28,10 +28,10 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		6A10C0DE0000000000000004 /* MileLog.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = MileLog.xcconfig; sourceTree = "<group>"; };
 		65164E172FDD6E8A00FBA1D9 /* MileLog.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MileLog.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		65164E262FDD6E8B00FBA1D9 /* MileLogTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MileLogTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		65164E302FDD6E8B00FBA1D9 /* MileLogUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MileLogUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		6A10C0DE0000000000000004 /* MileLog.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = MileLog.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -102,14 +102,6 @@
 			);
 			sourceTree = "<group>";
 		};
-		6A10C0DE0000000000000005 /* Config */ = {
-			isa = PBXGroup;
-			children = (
-				6A10C0DE0000000000000004 /* MileLog.xcconfig */,
-			);
-			path = Config;
-			sourceTree = "<group>";
-		};
 		65164E182FDD6E8A00FBA1D9 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -118,6 +110,14 @@
 				65164E302FDD6E8B00FBA1D9 /* MileLogUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		6A10C0DE0000000000000005 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				6A10C0DE0000000000000004 /* MileLog.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -221,6 +221,7 @@
 			knownRegions = (
 				en,
 				Base,
+				sl,
 			);
 			mainGroup = 65164E0E2FDD6E8A00FBA1D9;
 			minimizedProjectReferenceProxies = 1;
