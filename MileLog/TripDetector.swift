@@ -110,6 +110,11 @@ final class TripDetector: NSObject, ObservableObject {
     @Published private(set) var isEnabled = false
     @Published private(set) var activeTrip: ActiveTripState?
     @Published private(set) var permission: CLAuthorizationStatus = .notDetermined
+    /// Explains the permissions before iOS asks for them, the first time
+    /// auto-detect is switched on — the system prompts used to appear with
+    /// no context at all. Shown by RootTabView.
+    @Published var showsPermissionPrimer = false
+    private static let primerShownKey = "MileLog.autoDetectPrimerShown"
 
     private let manager = CLLocationManager()
     private let motion = MotionVerifier()
@@ -147,6 +152,11 @@ final class TripDetector: NSObject, ObservableObject {
     private var candidate: Candidate?
     private var verificationDeadline: Timer?
     private let speedConfirmKmh: Double = 25
+    /// Fixes older than this before verification began are ignored, and
+    /// speeds above `maxPlausibleSpeedKmh` count as zero — see
+    /// `updateVerification(with:)`.
+    private let staleFixToleranceSeconds: TimeInterval = 5
+    private let maxPlausibleSpeedKmh: Double = 250
     private let verificationSeconds: TimeInterval = 90
     /// CoreMotion's "automotive" signal alone is unreliable when the user is
     /// in a moving vehicle as a passenger or even walking next to a car.
@@ -336,6 +346,23 @@ final class TripDetector: NSObject, ObservableObject {
     }
 
     // MARK: - Public API
+
+    /// What the Auto-detect toggles call: goes through the permission
+    /// explainer first when iOS is going to ask for anything.
+    func requestAutoDetect(_ enabled: Bool) {
+        if enabled, permission != .authorizedAlways,
+           !UserDefaults.standard.bool(forKey: Self.primerShownKey) {
+            showsPermissionPrimer = true
+            return
+        }
+        setAutoDetect(enabled)
+    }
+
+    func confirmPermissionPrimer() {
+        UserDefaults.standard.set(true, forKey: Self.primerShownKey)
+        showsPermissionPrimer = false
+        setAutoDetect(true)
+    }
 
     /// Single entry point for the Auto-detect toggle, used by both the Record
     /// screen quick-toggle and the Settings toggle so there's exactly one
@@ -602,7 +629,13 @@ final class TripDetector: NSObject, ObservableObject {
         guard location.horizontalAccuracy >= 0,
               location.horizontalAccuracy < store.settings.energyMode.maxAcceptableGPSAccuracy else { return }
 
-        let kmh = max(0, location.speed) * 3.6
+        // A cached fix from before this wake is not evidence of driving now:
+        // the first update after startUpdatingLocation can be an old one, and
+        // a field test passed verification at "144 km/h" while parked from
+        // exactly that. Speeds no car reaches are GPS noise, not driving.
+        guard location.timestamp >= c.startedAt.addingTimeInterval(-staleFixToleranceSeconds) else { return }
+        let rawKmh = max(0, location.speed) * 3.6
+        let kmh = rawKmh <= maxPlausibleSpeedKmh ? rawKmh : 0
         if kmh > c.maxSpeedKmh { c.maxSpeedKmh = kmh }
 
         // Accumulate GPS distance from the last update so the automotive
@@ -1199,6 +1232,11 @@ final class TripDetector: NSObject, ObservableObject {
     /// Skips archived vehicles — an archived vehicle should never be silently
     /// reused as the fallback for a brand-new trip.
     private func fallbackVehicle() -> Vehicle? {
+        // The car picked on the Record screen first: the screen showed one car
+        // while an auto trip was filed under another (field test, 19 Oct).
+        if let id = store.preferredVehicleID, let v = store.vehicle(id), v.isActive {
+            return v
+        }
         if let latest = store.trips.sorted(by: { $0.startedAt > $1.startedAt }).first,
            let v = store.vehicle(latest.vehicleID), v.isActive {
             return v

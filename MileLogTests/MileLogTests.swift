@@ -50,6 +50,36 @@ final class MileLogTests: XCTestCase {
         XCTAssertFalse(AudioRoute.sameDevice("A1:B2:C3:D4:E5:F6-tacl", ""))
     }
 
+    // MARK: - Input and formatting
+
+    func testDecimalInputAllowsOneSeparator() {
+        XCTAssertEqual(DecimalInput.sanitize("0,180,2", fractionDigits: 3), "0,180")
+        XCTAssertEqual(DecimalInput.sanitize("12.345", fractionDigits: 2), "12.34")
+        XCTAssertEqual(DecimalInput.sanitize("1a2€", fractionDigits: 2), "12")
+        XCTAssertEqual(DecimalInput.parse("0,43"), 0.43)
+    }
+
+    func testPlateIsTidied() {
+        XCTAssertEqual(Vehicle.tidyPlate("mb ab-123 !!"), "MB AB-123")
+        XCTAssertEqual(Vehicle.tidyPlate("  lj   zz-999 "), "LJ ZZ-999")
+        XCTAssertEqual(Vehicle.tidyPlate("ce čž-12"), "CE ČŽ-12")
+    }
+
+    func testDistancesRoundToTenths() {
+        XCTAssertEqual(3.430579.roundedToTenthKm, 3.4, accuracy: 1e-9)
+        XCTAssertEqual(3.45.roundedToTenthKm + 12.5, 16.0, accuracy: 1e-9)
+    }
+
+    func testFormatFollowsLanguage() {
+        let saved = Format.locale
+        defer { Format.locale = saved }
+        Format.locale = Locale(identifier: "sl_SI")
+        XCTAssertEqual(Format.km(12.5), "12,5 km")
+        XCTAssertEqual(Format.km(16), "16,0 km")
+        Format.locale = Locale(identifier: "en_US")
+        XCTAssertEqual(Format.km(3.43), "3.4 km")
+    }
+
     // MARK: - Language
 
     func testNativeLanguageNames() {
@@ -60,5 +90,14 @@ final class MileLogTests: XCTestCase {
     @MainActor
     func testAppShipsSlovenian() {
         XCTAssertTrue(AppLanguage().available.contains("sl"))
+    }
+
+    @MainActor
+    func testLanguageListHasOnlyShippedTranslationsOnce() {
+        // Info.plist once declared "de", which put an untranslated
+        // "Deutsch" and a second "English" in the picker.
+        let available = AppLanguage().available
+        XCTAssertEqual(available.count, Set(available).count)
+        XCTAssertEqual(Set(available), ["en", "sl"])
     }
 }

@@ -97,15 +97,15 @@ enum PDFReporter {
     // Date · Vehicle · Type · Customer / Purpose · From · To · km · €
     // Widths sum to 770 — the landscape A4 text width at 36pt margins.
     // From and To get 170pt each so a real street address fits whole.
-    private static let ownCarColumnWidths: [CGFloat] = [62, 70, 55, 130, 170, 170, 50, 63]
+    private static let ownCarColumnWidths: [CGFloat] = [62, 95, 55, 160, 150, 150, 40, 58]
     private static var ownCarColumnTitles: [String] {
         [
-            String(localized: "Date"),
-            String(localized: "Vehicle"),
-            String(localized: "Type"),
-            String(localized: "Customer / Purpose"),
-            String(localized: "From"),
-            String(localized: "To"),
+            String(localized: "Date", bundle: .app),
+            String(localized: "Vehicle", bundle: .app),
+            String(localized: "Type", bundle: .app),
+            String(localized: "Customer / Purpose", bundle: .app),
+            String(localized: "From", bundle: .app),
+            String(localized: "To", bundle: .app),
             "km",
             "€"
         ]
@@ -127,8 +127,8 @@ enum PDFReporter {
         let businessTrips = monthly.filter { $0.type == .business }
         let commuteTrips = monthly.filter { $0.type == .commute }
 
-        let businessKm = businessTrips.reduce(0) { $0 + $1.distanceKm }
-        let commuteKm  = commuteTrips.reduce(0) { $0 + $1.distanceKm }
+        let businessKm = businessTrips.reduce(0) { $0 + $1.distanceKm.roundedToTenthKm }
+        let commuteKm  = commuteTrips.reduce(0) { $0 + $1.distanceKm.roundedToTenthKm }
         let businessEur = businessKm * businessRate
         let commuteEur  = commuteKm * commuteRate
 
@@ -176,7 +176,7 @@ enum PDFReporter {
             }
 
             if monthly.isEmpty {
-                let note = String(localized: "No trips recorded for \(monthLabel).")
+                let note = String(localized: "No trips recorded for \(monthLabel).", bundle: .app)
                 note.draw(at: CGPoint(x: margin, y: y + 8),
                           withAttributes: [
                             .font: UIFont.italicSystemFont(ofSize: 11),
@@ -256,9 +256,9 @@ enum PDFReporter {
             let day = cal.component(.day, from: trip.startedAt)
             tripsByDay[day, default: []].append(trip)
         }
-        // Round per day, then total the rounded values — see drawPotniNalogRow.
+        // Per day to 0.1 km, totalled from those values — see drawPotniNalogRow.
         let kmByDay = tripsByDay.mapValues { dayTrips in
-            Int(dayTrips.reduce(0) { $0 + $1.distanceKm }.rounded())
+            dayTrips.reduce(0) { $0 + $1.distanceKm.roundedToTenthKm }.roundedToTenthKm
         }
         let totalKm = kmByDay.values.reduce(0, +)
 
@@ -325,10 +325,8 @@ enum PDFReporter {
         // failure previously still returned a "successful" Result (round-2
         // UX review finding).
         guard (try? data.write(to: url)) != nil else { return nil }
-        // totalKm is whole kilometres here (summed from the rounded per-day
-        // values so the printed column reconciles); Result reports km as a
-        // Double for the own-car report, which does carry decimals.
-        return Result(url: url, tripCount: monthly.count, headlineKm: Double(totalKm))
+        // totalKm is summed from the per-day values printed in the column.
+        return Result(url: url, tripCount: monthly.count, headlineKm: totalKm)
     }
 
     // MARK: - Header / footer drawing ---------------------------------------
@@ -352,14 +350,14 @@ enum PDFReporter {
             .foregroundColor: UIColor.black
         ]
 
-        String(localized: "MileLog · \(month)").draw(
+        String(localized: "MileLog · \(month)", bundle: .app).draw(
             at: CGPoint(x: margin, y: margin),
             withAttributes: titleAttrs
         )
 
         let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .short)
         let _ = tripCount  // referenced via summary line below
-        String(localized: "Generated \(stamp)").draw(
+        String(localized: "Generated \(stamp)", bundle: .app).draw(
             at: CGPoint(x: margin, y: margin + 30),
             withAttributes: subAttrs
         )
@@ -402,8 +400,11 @@ enum PDFReporter {
         // Settings) can't run into the date line drawn on the same row on
         // the right — `.draw(at:)` doesn't clip or wrap (round-6
         // adversarial review finding).
+        // Blank line to fill in by hand when the company isn't set — the
+        // app-instruction placeholder used to end up printed on the order.
+        // The generate screen warns about missing details beforehand.
         let companyName = settings.companyName.isEmpty
-            ? String(localized: "(Company name — set in Settings)")
+            ? placeholder
             : truncate(settings.companyName, length: 35)
         companyName.draw(at: CGPoint(x: margin, y: margin), withAttributes: titleAttrs)
         "POTNI NALOG za prevoz oseb".draw(at: CGPoint(x: margin, y: margin + 20), withAttributes: titleAttrs)
@@ -500,27 +501,35 @@ enum PDFReporter {
             businessRate: businessRate, commuteRate: commuteRate
         ), decimals: 2)
 
-        // Prefer customer; fall back to purpose; never show "—" inside a PDF cell.
-        let customerOrPurpose: String = {
-            if !trip.customerName.isEmpty { return trip.customerName }
-            if !trip.purpose.isEmpty      { return trip.purpose }
-            return ""
-        }()
+        // Both, when both are set: an accountant needs the purpose, not just
+        // who was visited. Never "—" inside a PDF cell.
+        let customerOrPurpose = [trip.customerName, trip.purpose]
+            .filter { !$0.isEmpty }
+            .joined(separator: " — ")
 
         let cells = [
             df.string(from: trip.startedAt),
-            truncate(vehicle?.name ?? "—", length: 16),
+            vehicle?.name.trimmingCharacters(in: .whitespaces) ?? "—",
             trip.type.label,
-            truncate(customerOrPurpose, length: 30),
-            truncate(trip.startAddress, length: 38),
-            truncate(trip.endAddress, length: 38),
-            si(trip.distanceKm, decimals: 1),
+            customerOrPurpose,
+            trip.startAddress,
+            trip.endAddress,
+            si(trip.distanceKm.roundedToTenthKm, decimals: 1),
             eur
         ]
 
+        // Cut each cell to its column's width (with "…") rather than to a
+        // fixed character count, which clipped "Skoda Octavia" to
+        // "Skoda Octavi.." while leaving narrow characters room to spare.
+        let clipped = NSMutableParagraphStyle()
+        clipped.lineBreakMode = .byTruncatingTail
+        var attrs = cellAttrs
+        attrs[.paragraphStyle] = clipped
         var x = margin + 4
         for (i, text) in cells.enumerated() {
-            text.draw(at: CGPoint(x: x, y: y + 6), withAttributes: cellAttrs)
+            let rect = CGRect(x: x, y: y + 6, width: ownCarColumnWidths[i] - 6, height: rowHeight - 6)
+            (text as NSString).draw(with: rect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                    attributes: attrs, context: nil)
             x += ownCarColumnWidths[i]
         }
     }
@@ -577,7 +586,7 @@ enum PDFReporter {
 
     private static func drawPotniNalogRow(
         day: Int, date: Date, trips: [Trip],
-        dayKmRounded: Int,
+        dayKmRounded: Double,
         dayFormatter: DateFormatter, weekdayFormatter: DateFormatter,
         hourFormatter: DateFormatter, minuteFormatter: DateFormatter,
         at y: CGFloat, zebra: Bool
@@ -619,11 +628,10 @@ enum PDFReporter {
         } ?? ""
         let prihodMinute = trips.last.map { minuteFormatter.string(from: $0.endedAt) } ?? ""
 
-        // Whole kilometres, like the reference workbook. Rounded per day and
-        // the month total summed from these rounded values, so the printed
-        // column actually adds up to the printed total — summing the raw
-        // decimals instead leaves an official document whose figures do not
-        // reconcile when someone checks them with a calculator.
+        // To 0.1 km, like every other screen and report (whole kilometres
+        // printed a 3.4 km trip as "3" and lost up to 0.5 km per day). Each
+        // day is rounded and the month total summed from those values, so
+        // the printed column adds up to the printed total.
         let cells = [
             "\(day)",
             dayFormatter.string(from: date),
@@ -632,7 +640,7 @@ enum PDFReporter {
             odhodMinute,
             prihodHour,
             prihodMinute,
-            dayKmRounded > 0 ? "\(dayKmRounded)" : "",
+            dayKmRounded > 0 ? si(dayKmRounded, decimals: 1) : "",
             "",                                  // Stanje števca — handwritten
             weekdayFormatter.string(from: date)
         ]
@@ -656,7 +664,7 @@ enum PDFReporter {
         }
     }
 
-    private static func drawPotniNalogFooter(totalKm: Int, at y: CGFloat) {
+    private static func drawPotniNalogFooter(totalKm: Double, at y: CGFloat) {
         let totalAttrs: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: 11, weight: .semibold),
             .foregroundColor: UIColor.black
@@ -666,7 +674,7 @@ enum PDFReporter {
             .foregroundColor: UIColor.black
         ]
 
-        String(format: "SKUPAJ PREVOŽENIH KILOMETROV : %ld", totalKm)
+        "SKUPAJ PREVOŽENIH KILOMETROV : \(si(totalKm, decimals: 1))"
             .draw(at: CGPoint(x: margin, y: y), withAttributes: totalAttrs)
         "Stanje km števca: _______________".draw(at: CGPoint(x: margin, y: y + 20), withAttributes: labelAttrs)
         "Razlika v km: _______________".draw(at: CGPoint(x: margin, y: y + 36), withAttributes: labelAttrs)
@@ -708,6 +716,7 @@ enum PDFReporter {
         let cal = Calendar.current
         let date = cal.date(from: DateComponents(year: year, month: month, day: 1)) ?? Date()
         let df = DateFormatter()
+        df.locale = Format.locale
         df.dateFormat = "LLLL yyyy"
         return df.string(from: date)
     }

@@ -126,7 +126,7 @@ private struct MergeCandidateRow: View {
         let from = trip.startAddress.isEmpty ? "?" : trip.startAddress
         let to = trip.endAddress.isEmpty ? "?" : trip.endAddress
         let time = "\(trip.startedAt.formatted(date: .omitted, time: .shortened))–\(trip.endedAt.formatted(date: .omitted, time: .shortened))"
-        return "\(time) · \(String(format: "%.1f", trip.distanceKm)) km · \(from) → \(to)"
+        return "\(time) · \(Format.km(trip.distanceKm)) · \(from) → \(to)"
     }
 
     private var gapLine: String {

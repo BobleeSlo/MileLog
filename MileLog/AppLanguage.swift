@@ -24,11 +24,12 @@ final class AppLanguage: ObservableObject {
     private let defaults = UserDefaults.standard
 
     init() {
-        let shipped = Bundle.main.localizations.filter { $0 != "Base" }
+        let shipped = Self.shippedLanguages()
         available = shipped.sorted {
             Self.nativeName(for: $0).localizedCaseInsensitiveCompare(Self.nativeName(for: $1)) == .orderedAscending
         }
         code = Self.appOverride(in: shipped) ?? Self.system
+        applyToLookups()
     }
 
     /// Locale handed to SwiftUI, which uses it to look up `Text` strings and
@@ -49,6 +50,21 @@ final class AppLanguage: ObservableObject {
         } else {
             defaults.set([newCode], forKey: Self.appleLanguagesKey)
         }
+        applyToLookups()
+    }
+
+    /// Points `Bundle.app` (used by every `String(localized:)`) and `Format`
+    /// at the chosen language right away. `Bundle.main` only re-reads the
+    /// language at the next launch, so those strings used to stay in the old
+    /// language until a restart.
+    private func applyToLookups() {
+        Format.locale = locale
+        let language = code != Self.system
+            ? code
+            : Bundle.preferredLocalizations(from: available, forPreferences: Locale.preferredLanguages).first
+        Bundle.app = language
+            .flatMap { Bundle.main.path(forResource: $0, ofType: "lproj") }
+            .flatMap(Bundle.init(path:)) ?? .main
     }
 
     /// A language's name in that language, e.g. "slovenščina" → "Slovenščina".
@@ -58,6 +74,17 @@ final class AppLanguage: ObservableObject {
     }
 
     // MARK: - Private
+
+    /// Languages with a translation folder in the app. Not
+    /// `Bundle.main.localizations`: that also lists everything named in
+    /// Info.plist's `CFBundleLocalizations`, which once offered "Deutsch"
+    /// (never translated) and "English" twice.
+    private static func shippedLanguages() -> [String] {
+        let codes = Bundle.main.paths(forResourcesOfType: "lproj", inDirectory: nil)
+            .map { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent }
+            .filter { $0 != "Base" }
+        return Array(Set(codes))
+    }
 
     private static let appleLanguagesKey = "AppleLanguages"
 
@@ -72,4 +99,10 @@ final class AppLanguage: ObservableObject {
         let language = Locale(identifier: first).language.languageCode?.identifier ?? first
         return shipped.contains(language) ? language : nil
     }
+}
+
+extension Bundle {
+    /// Translations in the app's current language — pass as `bundle:` to
+    /// `String(localized:)`. Set by `AppLanguage`.
+    nonisolated(unsafe) static var app: Bundle = .main
 }

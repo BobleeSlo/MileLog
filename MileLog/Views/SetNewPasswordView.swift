@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Final step of the password-reset flow: the user has tapped the link in
-/// their email, `SupabaseService.handleRecoveryLink` has exchanged it for a
+/// their email, `SupabaseService.handleAuthLink` has exchanged it for a
 /// short-lived recovery session, and this screen sets the new password.
 ///
 /// Round 5 added a "Forgot password?" button that sent the email but had
@@ -25,7 +25,7 @@ struct SetNewPasswordView: View {
     /// typing is noise, not help.
     private var mismatchWarning: String? {
         guard !confirmation.isEmpty, password != confirmation else { return nil }
-        return "The two passwords don't match."
+        return String(localized: "The two passwords don't match.", bundle: .app)
     }
 
     var body: some View {
@@ -68,7 +68,7 @@ struct SetNewPasswordView: View {
             .keyboardDoneToolbar()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    // There MUST be an exit. `handleRecoveryLink` has
+                    // There MUST be an exit. `handleAuthLink` has
                     // already established a session and flipped
                     // `isAuthenticated`, so there's no sign-in screen left
                     // behind this sheet — and with no Cancel and
@@ -102,7 +102,7 @@ struct SetNewPasswordView: View {
             // server-side password-policy rejection and a plain network
             // failure, neither of which is helped by requesting a new link
             // (round-7 UX review finding).
-            errorMessage = "Couldn't set the new password. Check your connection and try again — or tap Cancel and request a fresh reset link from the sign-in screen."
+            errorMessage = String(localized: "Couldn't set the new password. Check your connection and try again — or tap Cancel and request a fresh reset link from the sign-in screen.", bundle: .app)
         }
     }
 }

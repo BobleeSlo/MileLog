@@ -15,6 +15,13 @@ including the Slovenian *potni nalog*.
 3. Select your iPhone as the run destination, then **Product → Clean Build
    Folder** (⇧⌘K) and **Run** (⌘R).
 4. Check **Settings → About** in the app shows the version you just built.
+5. In the Supabase dashboard, **Authentication → URL Configuration**, add
+   `milelog://**` to **Redirect URLs**. The sign-up confirmation and
+   password-reset emails link back into the app through it; without it
+   Supabase sends people to the **Site URL** instead (`http://localhost:3000`
+   on a new project, a dead page). Setting the Site URL to
+   `milelog://auth/confirm` as well catches any email that has no redirect
+   of its own.
 
 ## Before every build you install
 

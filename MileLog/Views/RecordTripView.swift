@@ -9,6 +9,9 @@ struct RecordTripView: View {
 
     @State private var selectedVehicleID: UUID?
     @State private var tripToClassify: Trip?
+    /// Brief notice after a recording too short to keep — shown instead of
+    /// opening the whole classify sheet for a 0.0 km trip.
+    @State private var showingTooShortNotice = false
     @State private var showingAddVehicle = false
 
     /// True when the auto-detector has a trip in flight — manual button is
@@ -18,19 +21,21 @@ struct RecordTripView: View {
     /// Distance shown in the hero badge — the auto-detector's running trip
     /// takes priority over the manual recorder when both are conceptually
     /// in play.
+    /// Zero when nothing is recording: the finished trip's km used to stay
+    /// on the dial next to "Start trip", reading like a current total.
     private var heroDistance: Double {
-        detector.activeTrip?.distanceKm ?? location.distanceKm
+        detector.activeTrip?.distanceKm ?? (location.isTracking ? location.distanceKm : 0)
     }
 
     private var heroSubtitle: String? {
         if let auto = detector.activeTrip {
-            return "Auto · \(store.vehicleName(auto.vehicleID))"
+            return String(localized: "Auto · \(store.vehicleName(auto.vehicleID))", bundle: .app)
         }
         if location.isTracking {
             if let id = selectedVehicleID, let v = store.vehicle(id) {
-                return "Manual · \(v.name)"
+                return String(localized: "Manual · \(v.name)", bundle: .app)
             }
-            return "Manual"
+            return String(localized: "Manual", bundle: .app)
         }
         return nil
     }
@@ -50,6 +55,12 @@ struct RecordTripView: View {
                         .padding(.vertical, 8)
 
                     if !autoActive { primaryButton }
+                    if showingTooShortNotice {
+                        Label("Too short to save (under \(Format.km(0.2))) — discarded.", systemImage: "info.circle")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .transition(.opacity)
+                    }
 
                     if autoActive {
                         autoActiveHint
@@ -89,7 +100,9 @@ struct RecordTripView: View {
             .onAppear {
                 location.requestPermission()
                 if selectedVehicleID == nil {
-                    selectedVehicleID = store.activeVehicles.first?.id
+                    let preferred = store.preferredVehicleID
+                    selectedVehicleID = store.activeVehicles.first(where: { $0.id == preferred })?.id
+                        ?? store.activeVehicles.first?.id
                 }
             }
             // `onAppear` doesn't re-fire when a vehicle is added from the
@@ -183,7 +196,7 @@ struct RecordTripView: View {
         VStack(spacing: 6) {
             Toggle(isOn: Binding(
                 get: { store.settings.autoDetectEnabled },
-                set: { detector.setAutoDetect($0) }
+                set: { detector.requestAutoDetect($0) }
             )) {
                 HStack(spacing: 10) {
                     Image(systemName: store.settings.autoDetectEnabled
@@ -212,7 +225,7 @@ struct RecordTripView: View {
 
     private var autoDetectStatus: String {
         guard store.settings.autoDetectEnabled else {
-            return "Off — trips won't be detected automatically"
+            return String(localized: "Off — trips won't be detected automatically", bundle: .app)
         }
         switch detector.permission {
         case .authorizedAlways:
@@ -225,11 +238,11 @@ struct RecordTripView: View {
             // toggling auto-detect on, while the system prompt is still
             // pending (round-2 UX review finding). Matches SettingsView's
             // own already-correct copy for this same case.
-            return "Waiting for location permission…"
+            return String(localized: "Waiting for location permission…", bundle: .app)
         case .authorizedWhenInUse:
-            return "Needs 'Always' location — open Settings"
+            return String(localized: "Needs 'Always' location — open Settings", bundle: .app)
         case .denied, .restricted:
-            return "Location denied — enable in iOS Settings"
+            return String(localized: "Location denied — enable in iOS Settings", bundle: .app)
         @unknown default:
             return "On"
         }
@@ -240,6 +253,7 @@ struct RecordTripView: View {
             ForEach(store.activeVehicles) { vehicle in
                 Button {
                     selectedVehicleID = vehicle.id
+                    store.preferredVehicleID = vehicle.id
                 } label: {
                     HStack {
                         Text("\(vehicle.name) · \(vehicle.type.label)")
@@ -300,7 +314,7 @@ struct RecordTripView: View {
                 )
 
             VStack(spacing: 6) {
-                Text(String(format: "%.1f", heroDistance))
+                Text(Format.number(heroDistance))
                     .font(.system(size: 64, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .foregroundColor(.white)
@@ -460,6 +474,17 @@ struct RecordTripView: View {
         // endTrip already captures its end timestamp synchronously before
         // any async work for the identical reason.
         let realEndedAt = endLocation?.timestamp ?? Date()
+
+        // Same threshold the auto-detector applies: nothing this short is a
+        // real trip, so don't ask the user to classify it.
+        guard distanceKm >= 0.2 else {
+            withAnimation { showingTooShortNotice = true }
+            Task {
+                try? await Task.sleep(for: .seconds(4))
+                withAnimation { showingTooShortNotice = false }
+            }
+            return
+        }
 
         let startAddress = await location.reverseGeocode(startLocation)
         let endAddress = await location.reverseGeocode(endLocation)

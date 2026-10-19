@@ -11,8 +11,8 @@ enum VehicleType: String, Codable, CaseIterable, Identifiable {
     /// Localized — looked up in Localizable.xcstrings at call time.
     var label: String {
         switch self {
-        case .own:     return String(localized: "My car")
-        case .company: return String(localized: "Company car")
+        case .own:     return String(localized: "My car", bundle: .app)
+        case .company: return String(localized: "Company car", bundle: .app)
         }
     }
 }
@@ -26,9 +26,9 @@ enum TripType: String, Codable, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .business:    return String(localized: "Business")
-        case .commute:     return String(localized: "Commute")
-        case .privateTrip: return String(localized: "Private")
+        case .business:    return String(localized: "Business", bundle: .app)
+        case .commute:     return String(localized: "Commute", bundle: .app)
+        case .privateTrip: return String(localized: "Private", bundle: .app)
         }
     }
 }
@@ -44,20 +44,20 @@ enum EnergyMode: String, Codable, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .lowPower:     return String(localized: "Low Power")
-        case .balanced:     return String(localized: "Balanced")
-        case .highAccuracy: return String(localized: "High Accuracy")
+        case .lowPower:     return String(localized: "Low Power", bundle: .app)
+        case .balanced:     return String(localized: "Balanced", bundle: .app)
+        case .highAccuracy: return String(localized: "High Accuracy", bundle: .app)
         }
     }
 
     var summary: String {
         switch self {
         case .lowPower:
-            return String(localized: "≈100 m accuracy, max battery savings. Best for long highway drives.")
+            return String(localized: "≈100 m accuracy, max battery savings. Best for long highway drives.", bundle: .app)
         case .balanced:
-            return String(localized: "≈10 m accuracy. Recommended for most users — good track quality, moderate battery use.")
+            return String(localized: "≈10 m accuracy. Recommended for most users — good track quality, moderate battery use.", bundle: .app)
         case .highAccuracy:
-            return String(localized: "Best available accuracy. For dense city driving where exact routes matter. Higher battery use.")
+            return String(localized: "Best available accuracy. For dense city driving where exact routes matter. Higher battery use.", bundle: .app)
         }
     }
 }
@@ -357,10 +357,10 @@ enum ReceiptType: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .fuel:    return String(localized: "Fuel")
-        case .parking: return String(localized: "Parking")
-        case .toll:    return String(localized: "Toll")
-        case .other:   return String(localized: "Other")
+        case .fuel:    return String(localized: "Fuel", bundle: .app)
+        case .parking: return String(localized: "Parking", bundle: .app)
+        case .toll:    return String(localized: "Toll", bundle: .app)
+        case .other:   return String(localized: "Other", bundle: .app)
         }
     }
 }
@@ -402,10 +402,26 @@ struct Receipt: Identifiable, Hashable {
     }
 }
 
+extension Vehicle {
+    /// Name without stray spaces, plate in the printed form ("mb ab-123 !!"
+    /// → "MB AB-123"). Both end up on the potni nalog as typed otherwise.
+    func tidied() -> Vehicle {
+        var v = self
+        v.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        v.licensePlate = Self.tidyPlate(licensePlate)
+        return v
+    }
+
+    static func tidyPlate(_ plate: String) -> String {
+        let kept = plate.uppercased().filter { $0.isLetter || $0.isNumber || $0 == " " || $0 == "-" }
+        return kept.split(separator: " ", omittingEmptySubsequences: true).joined(separator: " ")
+    }
+}
+
 // MARK: - Grouping helper for the trips list
 
 struct MonthSection: Hashable {
     let title: String
     let trips: [Trip]
-    let summary: String
+    let businessKm: Double
 }

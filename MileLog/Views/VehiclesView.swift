@@ -78,13 +78,12 @@ struct VehiclesView: View {
             } message: { vehicle in
                 Text("\"\(vehicle.name)\" will be removed from this device and your cloud backup. Only do this if no trips reference this vehicle.")
             }
-            .confirmationDialog(
+            .alert(
                 "Delete \"\(swipeDeleteCandidate?.name ?? "")\"?",
                 isPresented: Binding(
                     get: { swipeDeleteCandidate != nil },
                     set: { if !$0 { swipeDeleteCandidate = nil } }
-                ),
-                titleVisibility: .visible
+                )
             ) {
                 Button("Delete", role: .destructive) {
                     if let v = swipeDeleteCandidate { _ = store.deleteVehicle(v) }
@@ -315,7 +314,7 @@ struct VehiclesView: View {
 
     private func lastUsedLabel(_ vehicle: Vehicle) -> String {
         guard let last = store.lastUsed(vehicle.id) else {
-            return "Never used"
+            return String(localized: "Never used", bundle: .app)
         }
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
@@ -386,6 +385,8 @@ struct VehicleEditView: View {
                     TextField("Name (e.g. Škoda Octavia)", text: $vehicle.name)
                         .disabled(hasLockedTrips)
                     TextField("License plate", text: $vehicle.licensePlate)
+                        .textInputAutocapitalization(.characters)
+                        .autocorrectionDisabled()
                         .disabled(hasLockedTrips)
                     Picker("Type", selection: $vehicle.type) {
                         ForEach(VehicleType.allCases) { type in
@@ -558,10 +559,9 @@ struct VehicleEditView: View {
                         .disabled(deletionMessage != nil)
                 }
             }
-            .confirmationDialog(
+            .alert(
                 "Delete \"\(vehicle.name)\"?",
-                isPresented: $showingDeleteConfirm,
-                titleVisibility: .visible
+                isPresented: $showingDeleteConfirm
             ) {
                 Button("Delete", role: .destructive) {
                     let mode = store.deleteVehicle(vehicle)
@@ -621,9 +621,9 @@ struct VehicleEditView: View {
         if let device = AudioRoute.currentBluetoothOutput() {
             vehicle.bluetoothName = device.name
             vehicle.bluetoothUID = device.uid
-            pairingMessage = "Paired with \(device.name)"
+            pairingMessage = String(localized: "Paired with \(device.name)", bundle: .app)
         } else {
-            pairingMessage = "No Bluetooth audio device detected. Make sure your iPhone is currently connected to the car's audio."
+            pairingMessage = String(localized: "No Bluetooth audio device detected. Make sure your iPhone is currently connected to the car's audio.", bundle: .app)
         }
     }
 }

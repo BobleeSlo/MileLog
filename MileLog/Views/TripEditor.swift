@@ -202,7 +202,7 @@ struct TripEditor: View {
             HStack {
                 Text("Distance")
                 Spacer()
-                TextField("0", value: $trip.distanceKm, format: .number)
+                TextField("0", value: $trip.distanceKm, format: .number.precision(.fractionLength(0...1)))
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
                     .disabled(isLocked)
@@ -267,7 +267,7 @@ struct TripEditor: View {
         if isOwnCarTrip {
             Section {
                 LabeledContent("Reimbursement",
-                               value: String(format: "€ %.2f", trip.reimbursement(
+                               value: Format.euros(trip.reimbursement(
                                 businessRate: store.settings.reimbursementRate,
                                 commuteRate: store.settings.commuteRate
                                )))
@@ -311,10 +311,9 @@ struct TripEditor: View {
                 }
             }
         }
-        .confirmationDialog(
+        .alert(
             "Discard this trip?",
-            isPresented: $showsDiscardConfirm,
-            titleVisibility: .visible
+            isPresented: $showsDiscardConfirm
         ) {
             Button("Discard", role: .destructive) { dismiss() }
             Button("Keep editing", role: .cancel) { }

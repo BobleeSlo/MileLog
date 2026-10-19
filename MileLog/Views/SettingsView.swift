@@ -9,6 +9,7 @@ struct SettingsView: View {
     @EnvironmentObject var location: LocationManager
     @EnvironmentObject var appLock: AppLock
     @EnvironmentObject var language: AppLanguage
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var exportURL: URL?
     @State private var lockResultMessage: String?
 
@@ -35,26 +36,10 @@ struct SettingsView: View {
 
                 // MARK: Reimbursement
                 Section {
-                    HStack {
-                        Text("Business rate")
-                        Spacer()
-                        TextField("0.43", value: $store.settings.reimbursementRate, format: .number)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .focused($focusedField, equals: .rate)
-                            .frame(maxWidth: 80)
-                        Text("€/km").foregroundColor(.secondary)
-                    }
-                    HStack {
-                        Text("Commute rate")
-                        Spacer()
-                        TextField("0.18", value: $store.settings.commuteRate, format: .number)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .focused($focusedField, equals: .commuteRate)
-                            .frame(maxWidth: 80)
-                        Text("€/km").foregroundColor(.secondary)
-                    }
+                    rateRow("Business rate", placeholder: "0.43",
+                            value: $store.settings.reimbursementRate, focus: .rate)
+                    rateRow("Commute rate", placeholder: "0.18",
+                            value: $store.settings.commuteRate, focus: .commuteRate)
                     Text("Business rate applies to customer visits with your own car. Commute rate applies to Home ↔ Work trips. Private trips and company-car trips are excluded from the monthly own-car report.")
                         .font(.footnote)
                         .foregroundColor(.secondary)
@@ -66,7 +51,7 @@ struct SettingsView: View {
                 Section {
                     Toggle(isOn: Binding(
                         get: { store.settings.autoDetectEnabled },
-                        set: { detector.setAutoDetect($0) }
+                        set: { detector.requestAutoDetect($0) }
                     )) {
                         Label("Detect trips automatically", systemImage: "location.fill")
                     }
@@ -176,7 +161,7 @@ struct SettingsView: View {
                         case .skippedAwaitingSettings:
                             // Don't claim success for a compliance action
                             // that declined to run (round-9 UX finding).
-                            lockResultMessage = "Waiting for your settings to finish syncing — try again in a moment."
+                            lockResultMessage = String(localized: "Waiting for your settings to finish syncing — try again in a moment.", bundle: .app)
                         }
                     } label: {
                         Label("Apply locks now", systemImage: "lock.fill")
@@ -387,7 +372,7 @@ struct SettingsView: View {
                 } header: {
                     SectionHeaderLabel(title: "Language", systemImage: "character.bubble")
                 } footer: {
-                    Text("Notifications and PDF reports switch language the next time MileLog starts.")
+                    Text("Changes the language of MileLog only — the rest of your iPhone stays as it is.")
                         .font(.caption)
                 }
 
@@ -414,8 +399,7 @@ struct SettingsView: View {
                 Section {
                     LabeledContent("App", value: "MileLog")
                     LabeledContent("Version", value: AppVersion.display)
-                    LabeledContent("Backend", value: AppVersion.backendHost)
-                    LabeledContent("Sync", value: "Private cloud backup")
+                    LabeledContent("Sync", value: String(localized: "Private cloud backup", bundle: .app))
                 } header: {
                     SectionHeaderLabel(title: "About", systemImage: "info.circle")
                 } footer: {
@@ -427,6 +411,11 @@ struct SettingsView: View {
             .keyboardDoneToolbar()
             .onAppear {
                 refreshExport()
+                // With a single company car there's nothing to choose — the
+                // greyed-out "Review trips" gave no hint why it was disabled.
+                if logbookVehicleID == nil, companyVehicles.count == 1 {
+                    logbookVehicleID = companyVehicles.first?.id
+                }
                 homeInput = store.settings.homeAddress
                 workInput = store.settings.workAddress
             }
@@ -458,11 +447,33 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Rate row helper
+
+    /// Label and value side by side; stacked at accessibility text sizes,
+    /// where the label broke into "Busi-ness rate" and the value showed "0,…".
+    private func rateRow(_ label: LocalizedStringKey, placeholder: String,
+                         value: Binding<Double>, focus: Field) -> some View {
+        let stacked = dynamicTypeSize.isAccessibilitySize
+        let layout = stacked
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+            : AnyLayout(HStackLayout())
+        return layout {
+            Text(label)
+            if !stacked { Spacer() }
+            HStack {
+                DecimalField(placeholder: placeholder, value: value, fractionDigits: 3)
+                    .focused($focusedField, equals: focus)
+                    .frame(maxWidth: stacked ? .infinity : 80)
+                Text("€/km").foregroundColor(.secondary)
+            }
+        }
+    }
+
     // MARK: - Address field helper
 
     @ViewBuilder
     private func addressField(
-        placeholder: String,
+        placeholder: LocalizedStringKey,
         text: Binding<String>,
         lat: Double?,
         lng: Double?,
@@ -493,7 +504,7 @@ struct SettingsView: View {
 
     private var autoDetectHint: String {
         if !store.settings.autoDetectEnabled {
-            return "When enabled, the app starts trips automatically when you start driving and ends them when you stop."
+            return String(localized: "When enabled, the app starts trips automatically when you start driving and ends them when you stop.", bundle: .app)
         }
         switch detector.permission {
         case .authorizedAlways:
@@ -501,11 +512,11 @@ struct SettingsView: View {
                 ? "Monitoring is active. Pair your cars under Vehicles to identify which car you're driving."
                 : "Permission granted but monitoring is off — toggle off and on to restart."
         case .authorizedWhenInUse:
-            return "Need 'Always' location permission for background detection. Tap the button below to upgrade."
+            return String(localized: "Need 'Always' location permission for background detection. Tap the button below to upgrade.", bundle: .app)
         case .notDetermined:
-            return "Tap the button below to grant location permission."
+            return String(localized: "Tap the button below to grant location permission.", bundle: .app)
         case .denied, .restricted:
-            return "Location permission denied. Enable 'Always' for MileLog in iOS Settings → Privacy."
+            return String(localized: "Location permission denied. Enable 'Always' for MileLog in iOS Settings → Privacy.", bundle: .app)
         @unknown default:
             return ""
         }
@@ -515,9 +526,11 @@ struct SettingsView: View {
         exportURL = store.trips.isEmpty ? nil : store.exportCSV()
     }
 
+    /// In the app's language, standalone form ("oktober", not "oktobra").
     private func monthLabel(_ month: Int) -> String {
         let df = DateFormatter()
-        return df.monthSymbols[month - 1]
+        df.locale = Format.locale
+        return df.standaloneMonthSymbols[month - 1].capitalized(with: Format.locale)
     }
 
     /// Years that have at least one trip plus the current year.
@@ -579,7 +592,12 @@ struct SettingsView: View {
             let captured = vehicle
 
             ReportSelectionView(
-                title: "\(vehicle.name) · \(monthLabel(month)) \(String(year))",
+                title: "\(monthLabel(month)) \(String(year))",
+                subtitle: [vehicle.name.trimmingCharacters(in: .whitespaces), vehicle.licensePlate]
+                    .filter { !$0.isEmpty }.joined(separator: " · "),
+                warning: store.settings.companyName.isEmpty || store.settings.driverName.isEmpty
+                    ? "Company name or driver isn't set, so the PDF leaves blank lines for them. Add them under Potni nalog details in Settings."
+                    : nil,
                 candidateTrips: candidates,
                 // The potni nalog is an official business-travel-order
                 // document (every generated page hardcodes "Vrsta prevoza:
@@ -636,7 +654,7 @@ struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(String(format: "%.1f km", trip.distanceKm))
+            Text(Format.km(trip.distanceKm))
                 .font(.subheadline.weight(.medium).monospacedDigit())
                 .foregroundColor(.secondary)
         }
@@ -673,7 +691,7 @@ struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(String(format: "%.1f km", trip.distanceKm))
+            Text(Format.km(trip.distanceKm))
                 .font(.subheadline.weight(.medium).monospacedDigit())
                 .foregroundColor(.secondary)
         }
@@ -701,7 +719,7 @@ struct SettingsView: View {
         focusedField = nil          // dismiss keyboard
         isGeocoding = true
         defer { isGeocoding = false }
-        geocodeStatus = "Resolving…"
+        geocodeStatus = String(localized: "Resolving…", bundle: .app)
         var status: [String] = []
 
         if !homeInput.isEmpty {

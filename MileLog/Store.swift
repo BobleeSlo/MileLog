@@ -106,6 +106,16 @@ final class Store: ObservableObject {
     /// Set after the user signs in; when present, mutations are mirrored to Supabase.
     private weak var supabase: SupabaseService?
 
+    /// The car last picked on the Record screen. Auto-detect uses it when
+    /// Bluetooth can't tell which car is moving, so the car the screen shows
+    /// and the car an auto trip is filed under agree. A vehicle UUID belongs
+    /// to one account, so a stale value after an account switch just fails
+    /// to match and is ignored.
+    var preferredVehicleID: UUID? {
+        get { UserDefaults.standard.string(forKey: "MileLog.preferredVehicleID").flatMap(UUID.init(uuidString:)) }
+        set { UserDefaults.standard.set(newValue?.uuidString, forKey: "MileLog.preferredVehicleID") }
+    }
+
     /// Read-only access for collaborators (TripDetector pushes GPS points + receipts).
     var supabaseService: SupabaseService? { supabase }
 
@@ -271,6 +281,10 @@ final class Store: ObservableObject {
     /// `deleteTrips`/`updateTrip` (both id-keyed) act on the wrong copy
     /// (round-4 adversarial review finding).
     func addTrip(_ trip: Trip) {
+        var trip = trip
+        // Stored at the 0.1 km every screen and report shows, so a month's
+        // total is exactly the sum of its rows (GPS gives e.g. 3.430579).
+        trip.distanceKm = trip.distanceKm.roundedToTenthKm
         trips.removeAll { $0.id == trip.id }
         trips.append(trip)
         save()
@@ -359,7 +373,7 @@ final class Store: ObservableObject {
             // here, leaving the one field that actually controls the
             // reported €-amount silently changeable via this same stale-
             // snapshot path (round-12 adversarial review finding).
-            merged.distanceKm = trip.distanceKm
+            merged.distanceKm = trip.distanceKm.roundedToTenthKm
             merged.type = trip.type
             // Lets TripEditor's Vehicle picker (round-16 addition) actually
             // take effect — auto-detection's Bluetooth-fallback path can
@@ -647,6 +661,7 @@ final class Store: ObservableObject {
             cal.dateComponents([.year, .month], from: trip.startedAt)
         }
         let df = DateFormatter()
+        df.locale = Format.locale   // month headers in the app's language
         df.dateFormat = "LLLL yyyy"
 
         return groups.keys
@@ -656,11 +671,11 @@ final class Store: ObservableObject {
                 let date = cal.date(from: comps) ?? Date()
                 let businessKm = items
                     .filter { $0.type == .business }
-                    .reduce(0) { $0 + $1.distanceKm }
+                    .reduce(0) { $0 + $1.distanceKm.roundedToTenthKm }
                 return MonthSection(
                     title: df.string(from: date),
                     trips: items,
-                    summary: String(format: "%.0f km business", businessKm)
+                    businessKm: businessKm
                 )
             }
     }
@@ -668,6 +683,7 @@ final class Store: ObservableObject {
     // MARK: - Vehicles
 
     func addVehicle(_ vehicle: Vehicle) {
+        let vehicle = vehicle.tidied()
         vehicles.append(vehicle)
         save()
         push(vehicle)
@@ -686,6 +702,7 @@ final class Store: ObservableObject {
         // adversarial review finding: this was the one remaining place
         // still using the blind-overwrite pattern updateTrip was fixed
         // for).
+        let vehicle = vehicle.tidied()
         var merged = vehicles[idx]
         // `type`/`name`/`licensePlate`/`vehicleTypeDescription`/`seatCount`
         // are all printed straight from this live Vehicle into the

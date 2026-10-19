@@ -11,7 +11,7 @@ enum BiometricAuth {
             switch self {
             case .faceID:  return "Face ID"
             case .touchID: return "Touch ID"
-            case .none:    return "Biometrics"
+            case .none:    return String(localized: "Biometrics", bundle: .app)
             }
         }
 

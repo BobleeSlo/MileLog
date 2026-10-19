@@ -60,6 +60,9 @@ struct MileLogApp: App {
                 .environmentObject(language)
                 // Switches every SwiftUI `Text` to the chosen language at once.
                 .environment(\.locale, language.locale)
+                // Rebuilds the screens so text computed in code (model labels,
+                // formatted numbers) switches too, not only `Text` literals.
+                .id(language.code)
         }
     }
 }
@@ -77,6 +80,8 @@ struct RootView: View {
     /// the recovery session it rides on is short-lived.
     @State private var showingSetNewPassword = false
     @State private var recoveryLinkFailed = false
+    @State private var confirmLinkFailed = false
+    @State private var emailConfirmed = false
     @State private var launchIsSlow = false
 
     var body: some View {
@@ -114,9 +119,22 @@ struct RootView: View {
         // the target; see SupabaseConfig.passwordResetRedirect.
         .onOpenURL { url in
             guard url.scheme == "milelog" else { return }
+            // milelog://auth/confirm — the sign-up confirmation email.
+            if url.host == "auth", url.path == "/confirm" {
+                Task {
+                    do {
+                        try await supabase.handleAuthLink(url)
+                        emailConfirmed = true
+                    } catch {
+                        supabase.confirmationLinkFailed = true
+                        confirmLinkFailed = true
+                    }
+                }
+                return
+            }
             Task {
                 do {
-                    try await supabase.handleRecoveryLink(url)
+                    try await supabase.handleAuthLink(url)
                     showingSetNewPassword = true
                 } catch {
                     // Previously an empty catch: the user tapped the link in
@@ -134,6 +152,16 @@ struct RootView: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text("It may have expired or already been used. Request a new one with “Forgot password?” below.")
+        }
+        .alert("That confirmation link didn't work", isPresented: $confirmLinkFailed) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Links expire after an hour and work only once. If you already confirmed, just sign in. Otherwise tap “Resend confirmation email” on the sign-in screen.")
+        }
+        .alert("Email confirmed", isPresented: $emailConfirmed) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Welcome to MileLog — you're signed in.")
         }
         .sheet(isPresented: $showingSetNewPassword) {
             SetNewPasswordView()

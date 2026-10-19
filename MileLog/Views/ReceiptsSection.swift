@@ -60,13 +60,12 @@ struct ReceiptsSection: View {
                 Text(errorText).font(.footnote).foregroundColor(.red)
             }
         }
-        .confirmationDialog(
+        .alert(
             "Delete this receipt?",
             isPresented: Binding(
                 get: { deleteCandidate != nil },
                 set: { if !$0 { deleteCandidate = nil } }
-            ),
-            titleVisibility: .visible
+            )
         ) {
             Button("Delete", role: .destructive) {
                 if let receipt = deleteCandidate {
@@ -131,6 +130,10 @@ struct ReceiptsSection: View {
                     TextField("0.00", text: $newAmount)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
+                        .onChange(of: newAmount) { _, new in
+                            let clean = DecimalInput.sanitize(new, fractionDigits: 2)
+                            if clean != new { newAmount = clean }
+                        }
                     Text("€").foregroundColor(.secondary)
                 }
                 if let scanHint {
@@ -177,7 +180,7 @@ struct ReceiptsSection: View {
         defer { photoItem = nil }
         guard let data = try? await item.loadTransferable(type: Data.self),
               let image = UIImage(data: data) else {
-            errorText = "Could not load image."
+            errorText = String(localized: "Could not load image.", bundle: .app)
             return
         }
         await handleImage(image)
@@ -195,10 +198,10 @@ struct ReceiptsSection: View {
         // seeing (and optionally correcting) what OCR guessed.
         isScanning = true
         if let detected = await ReceiptScanner.extractAmount(from: image) {
-            newAmount = String(format: "%.2f", detected)
-            scanHint = String(format: "Auto-detected: € %.2f — check it's correct.", detected)
+            newAmount = detected.formatted(.number.precision(.fractionLength(2)).grouping(.never).locale(Format.locale))
+            scanHint = String(localized: "Auto-detected: \(Format.euros(detected)) — check it's correct.", bundle: .app)
         } else {
-            scanHint = "Couldn't read an amount — enter it manually."
+            scanHint = String(localized: "Couldn't read an amount — enter it manually.", bundle: .app)
         }
         isScanning = false
 
@@ -207,7 +210,7 @@ struct ReceiptsSection: View {
 
     private func upload(image: UIImage) async {
         guard let jpeg = image.jpegData(compressionQuality: 0.75) else {
-            errorText = "Could not encode image."
+            errorText = String(localized: "Could not encode image.", bundle: .app)
             return
         }
         isUploading = true
@@ -239,7 +242,12 @@ struct ReceiptsSection: View {
             // review finding) — a network/storage failure is common
             // enough here (photographing a receipt right after a drive,
             // often with weak signal) to deserve plain-language copy.
-            errorText = "Couldn't save the receipt — check your connection and try again."
+            // Only blame the connection when it is the connection: every
+            // upload was once rejected by the server while this said
+            // "check your connection".
+            errorText = error is URLError
+                ? String(localized: "Couldn't save the receipt — check your connection and try again.", bundle: .app)
+                : String(localized: "The server didn't accept this receipt. Try again — if it keeps failing, send the Detection log from Settings.", bundle: .app)
         }
     }
 
@@ -259,7 +267,7 @@ struct ReceiptsSection: View {
             try await supabase.deleteReceipt(receipt)
             receipts.removeAll { $0.id == receipt.id }
         } catch {
-            errorText = "Couldn't delete the receipt — check your connection and try again."
+            errorText = String(localized: "Couldn't delete the receipt — check your connection and try again.", bundle: .app)
         }
     }
 }
@@ -288,7 +296,7 @@ private struct ReceiptRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(receipt.type.label).font(.subheadline.bold())
                 if let amount = receipt.amountEur {
-                    Text(String(format: "€ %.2f", amount))
+                    Text(Format.euros(amount))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

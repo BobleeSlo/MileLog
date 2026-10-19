@@ -60,6 +60,7 @@ final class DetectionLog: ObservableObject {
         let header = """
         MileLog Detection Log
         Generated: \(df.string(from: Date()))
+        Version: \(AppVersion.display) · Backend: \(AppVersion.backendHost)
         Entries: \(entries.count)
         --------------------------------------------------------------------------------
         """
