@@ -2,6 +2,7 @@ import Foundation
 import CoreLocation
 import AVFoundation
 import Combine
+import UIKit
 
 /// In-progress auto trip kept on disk so it survives the app being killed.
 ///
@@ -109,6 +110,11 @@ final class TripDetector: NSObject, ObservableObject {
     @Published private(set) var isEnabled = false
     @Published private(set) var activeTrip: ActiveTripState?
     @Published private(set) var permission: CLAuthorizationStatus = .notDetermined
+    /// Explains the permissions before iOS asks for them, the first time
+    /// auto-detect is switched on — the system prompts used to appear with
+    /// no context at all. Shown by RootTabView.
+    @Published var showsPermissionPrimer = false
+    private static let primerShownKey = "MileLog.autoDetectPrimerShown"
 
     private let manager = CLLocationManager()
     private let motion = MotionVerifier()
@@ -146,6 +152,11 @@ final class TripDetector: NSObject, ObservableObject {
     private var candidate: Candidate?
     private var verificationDeadline: Timer?
     private let speedConfirmKmh: Double = 25
+    /// Fixes older than this before verification began are ignored, and
+    /// speeds above `maxPlausibleSpeedKmh` count as zero — see
+    /// `updateVerification(with:)`.
+    private let staleFixToleranceSeconds: TimeInterval = 5
+    private let maxPlausibleSpeedKmh: Double = 250
     private let verificationSeconds: TimeInterval = 90
     /// CoreMotion's "automotive" signal alone is unreliable when the user is
     /// in a moving vehicle as a passenger or even walking next to a car.
@@ -161,6 +172,11 @@ final class TripDetector: NSObject, ObservableObject {
     // GPS health diagnostics so a future "GPS interrupted" complaint
     // becomes obvious in the Detection log.
     private var lastLocationAt: Date = .distantPast
+    /// Fixes delivered since the last heartbeat. A healthy trip sees many;
+    /// one per heartbeat means iOS is waking the app periodically rather
+    /// than streaming, and the distance is being measured as straight lines
+    /// between minutes-apart points.
+    private var fixesSinceLastHeartbeat = 0
     private var lastAccuracy: Double = -1
 
     // Trip-end policy: PURE movement-based, no Bluetooth involvement at all.
@@ -173,6 +189,12 @@ final class TripDetector: NSObject, ObservableObject {
     //   - movingSpeedKmh: at/above this the car counts as "moving" and
     //     `lastMovementAt` is refreshed.
     private let movingSpeedKmh: Double = 3
+    //   - minStepMetres / jitterAccuracyFactor / engineOffMinStepMetres:
+    //     how far a fix must move before it counts as travel when no speed
+    //     reading backs it up — see `jitterRadius(for:trip:movingBySpeed:)`.
+    nonisolated private static let minStepMetres: CLLocationDistance = 10
+    nonisolated private static let jitterAccuracyFactor: Double = 1.5
+    nonisolated private static let engineOffMinStepMetres: CLLocationDistance = 30
 
     // GPS-blackout protection: a tunnel, underground garage, or a plain
     // background-execution gap (iOS can suspend the app for minutes at a
@@ -226,6 +248,24 @@ final class TripDetector: NSObject, ObservableObject {
     // of that trip instead of a separate row.
     private let mergeWindowMinutes: Double = 15
     private let mergeRadiusMetres: Double = 300
+
+    /// Stop timeout once the trip's own car Bluetooth has gone away. Field
+    /// logs show the head unit disconnecting the moment the engine is
+    /// switched off, so "car Bluetooth gone AND not moving" is a much
+    /// stronger stop signal than silence alone — no need to wait out the
+    /// full stationary timeout. Still requires the car to be stationary, so
+    /// a Bluetooth flicker mid-drive (also seen in the logs) cannot end it.
+    private let bluetoothGoneStopMinutes: Double = 2
+
+    /// How far before the first GPS fix a new trip may be anchored back to
+    /// where this car was last parked. iOS only reports a significant
+    /// location change a few hundred metres into a drive, so without this
+    /// every trip starts late, a little short, and with a start address that
+    /// is not where the car actually was. Beyond this distance the parking
+    /// spot is treated as stale (the car was moved untracked).
+    private let parkingAnchorMaxMetres: CLLocationDistance = 1500
+    /// Below this the first fix is effectively at the parking spot already.
+    private let parkingAnchorMinMetres: CLLocationDistance = 50
 
     /// Set only when `auditActiveTrip()` closes a trip on its FIRST pass
     /// after an app relaunch (`restoreActiveTripIfAny`'s immediate audit),
@@ -306,6 +346,23 @@ final class TripDetector: NSObject, ObservableObject {
     }
 
     // MARK: - Public API
+
+    /// What the Auto-detect toggles call: goes through the permission
+    /// explainer first when iOS is going to ask for anything.
+    func requestAutoDetect(_ enabled: Bool) {
+        if enabled, permission != .authorizedAlways,
+           !UserDefaults.standard.bool(forKey: Self.primerShownKey) {
+            showsPermissionPrimer = true
+            return
+        }
+        setAutoDetect(enabled)
+    }
+
+    func confirmPermissionPrimer() {
+        UserDefaults.standard.set(true, forKey: Self.primerShownKey)
+        showsPermissionPrimer = false
+        setAutoDetect(true)
+    }
 
     /// Single entry point for the Auto-detect toggle, used by both the Record
     /// screen quick-toggle and the Settings toggle so there's exactly one
@@ -423,7 +480,7 @@ final class TripDetector: NSObject, ObservableObject {
         let currentBT = AudioRoute.currentBluetoothOutput()
         let btStatus: String
         if let pairedUID = trip.audioDeviceUID {
-            if currentBT?.uid == pairedUID {
+            if AudioRoute.sameDevice(currentBT?.uid ?? "", pairedUID) {
                 btStatus = "BT still connected (\(currentBT?.name ?? "?"))"
             } else if let cur = currentBT {
                 btStatus = "BT changed to \(cur.name)"
@@ -518,7 +575,14 @@ final class TripDetector: NSObject, ObservableObject {
         )
         persistCandidate()
         manager.allowsBackgroundLocationUpdates = true
-        store.settings.energyMode.apply(to: manager)
+        // Auto-pause off for the duration of the trip, whatever the energy
+        // mode says: a paused manager suspends the app, which stops the
+        // audit timer and leaves the trip open until the next launch.
+        store.settings.energyMode.apply(to: manager, duringActiveTrip: true)
+        // The blue status-bar pill. Also the only way to see, at a glance
+        // while driving, whether iOS is actually running background
+        // location for us — if it is missing, it is not.
+        manager.showsBackgroundLocationIndicator = true
         manager.startUpdatingLocation()
         if motion.isAvailable {
             motion.start()
@@ -527,9 +591,13 @@ final class TripDetector: NSObject, ObservableObject {
         }
 
         verificationDeadline?.invalidate()
+        // Scheduled on the main run loop, so the block runs on the main
+        // thread: assumeIsolated runs it there directly. The previous Task
+        // hop captured a weak var across a concurrency boundary, which is an
+        // error in Swift 6 mode.
         verificationDeadline = Timer.scheduledTimer(withTimeInterval: verificationSeconds,
                                                     repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.finishVerification() }
+            MainActor.assumeIsolated { self?.finishVerification() }
         }
         log.log("Verification started — need speed > \(Int(speedConfirmKmh)) km/h, or automotive activity with GPS movement.")
     }
@@ -561,7 +629,13 @@ final class TripDetector: NSObject, ObservableObject {
         guard location.horizontalAccuracy >= 0,
               location.horizontalAccuracy < store.settings.energyMode.maxAcceptableGPSAccuracy else { return }
 
-        let kmh = max(0, location.speed) * 3.6
+        // A cached fix from before this wake is not evidence of driving now:
+        // the first update after startUpdatingLocation can be an old one, and
+        // a field test passed verification at "144 km/h" while parked from
+        // exactly that. Speeds no car reaches are GPS noise, not driving.
+        guard location.timestamp >= c.startedAt.addingTimeInterval(-staleFixToleranceSeconds) else { return }
+        let rawKmh = max(0, location.speed) * 3.6
+        let kmh = rawKmh <= maxPlausibleSpeedKmh ? rawKmh : 0
         if kmh > c.maxSpeedKmh { c.maxSpeedKmh = kmh }
 
         // Accumulate GPS distance from the last update so the automotive
@@ -721,26 +795,40 @@ final class TripDetector: NSObject, ObservableObject {
             return
         }
 
+        let firstPoint = RecordedPoint(
+            recordedAt: location.timestamp,
+            lat: location.coordinate.latitude,
+            lng: location.coordinate.longitude,
+            speedKmh: Float(max(0, location.speed) * 3.6),
+            accuracyM: Float(location.horizontalAccuracy)
+        )
+        // Only anchor when the vehicle is confirmed (allowMerge is false for
+        // guessed vehicles and vehicle switches): anchoring to the wrong
+        // car's parking spot would invent a start and distance.
+        let anchor = allowMerge ? parkingAnchor(for: vehicle, firstFix: location, startedAt: startedAt) : nil
+        let tripStart = anchor?.coordinate ?? location.coordinate
+        var points = [firstPoint]
+        if let anchor {
+            points.insert(RecordedPoint(recordedAt: anchor.startedAt,
+                                        lat: anchor.coordinate.latitude,
+                                        lng: anchor.coordinate.longitude,
+                                        speedKmh: 0, accuracyM: 0), at: 0)
+        }
+
         let state = ActiveTripState(
             id: UUID(),
             vehicleID: vehicle.id,
             audioDeviceUID: device?.uid,
             audioDeviceName: device?.name,
-            startedAt: startedAt,
-            startLat: location.coordinate.latitude,
-            startLng: location.coordinate.longitude,
+            startedAt: anchor?.startedAt ?? startedAt,
+            startLat: tripStart.latitude,
+            startLng: tripStart.longitude,
             lastLat: location.coordinate.latitude,
             lastLng: location.coordinate.longitude,
-            distanceKm: 0,
+            distanceKm: (anchor?.metres ?? 0) / 1000,
             lastMovementAt: Date(),
             lastSpeedKmh: max(0, location.speed) * 3.6,
-            points: [RecordedPoint(
-                recordedAt: location.timestamp,
-                lat: location.coordinate.latitude,
-                lng: location.coordinate.longitude,
-                speedKmh: Float(max(0, location.speed) * 3.6),
-                accuracyM: Float(location.horizontalAccuracy)
-            )]
+            points: points
         )
         activeTrip = state
         persistActiveTrip(force: true)
@@ -748,27 +836,63 @@ final class TripDetector: NSObject, ObservableObject {
         pendingSwitchFirstSeenAt = nil
 
         manager.allowsBackgroundLocationUpdates = true
-        store.settings.energyMode.apply(to: manager)
+        // Auto-pause off for the duration of the trip, whatever the energy
+        // mode says: a paused manager suspends the app, which stops the
+        // audit timer and leaves the trip open until the next launch.
+        store.settings.energyMode.apply(to: manager, duringActiveTrip: true)
+        // The blue status-bar pill. Also the only way to see, at a glance
+        // while driving, whether iOS is actually running background
+        // location for us — if it is missing, it is not.
+        manager.showsBackgroundLocationIndicator = true
         manager.startUpdatingLocation()
         startAuditTimer()
 
         let bt = device.map { "BT \($0.name)" } ?? "no BT"
         log.log("Trip started: \(vehicle.name) [\(bt)] · \(store.settings.energyMode.label)", level: .info)
+        if ProcessInfo.processInfo.isLowPowerModeEnabled {
+            log.log("Low Power Mode is ON. iOS throttles background location hard in this mode — expect sparse fixes, under-measured distance, and trips that only close when the app is next opened.",
+                    level: .warning)
+        }
+    }
+
+    /// Where this car was last parked, if the new trip should start there.
+    ///
+    /// The car is physically where its previous trip ended, so when the first
+    /// fix of a new drive is a few hundred metres from that spot, the drive
+    /// really began at the spot: start the trip there, credit the missing
+    /// distance (straight line — a slight under-estimate), and back-date the
+    /// start by that distance at 30 km/h, capped at 5 minutes and never
+    /// before the previous trip ended.
+    private func parkingAnchor(for vehicle: Vehicle, firstFix: CLLocation, startedAt: Date)
+        -> (coordinate: CLLocationCoordinate2D, metres: CLLocationDistance, startedAt: Date)? {
+        guard let previous = store.trips
+            .filter({ $0.vehicleID == vehicle.id && $0.endedAt <= startedAt })
+            .max(by: { $0.endedAt < $1.endedAt }),
+              let lat = previous.endLat, let lng = previous.endLng
+        else { return nil }
+        let parked = CLLocation(latitude: lat, longitude: lng)
+        let metres = parked.distance(from: firstFix)
+        guard metres >= parkingAnchorMinMetres, metres <= parkingAnchorMaxMetres else { return nil }
+
+        let leadSeconds = min(metres / (30_000.0 / 3600.0), 5 * 60)
+        let anchoredStart = max(previous.endedAt, startedAt.addingTimeInterval(-leadSeconds))
+        log.log(String(format: "Trip start anchored to where %@ was parked — %.0f m before the first fix.",
+                       vehicle.name, metres), level: .info)
+        return (parked.coordinate, metres, anchoredStart)
     }
 
     // MARK: - Audit (pure elapsed-time-since-movement trip end)
 
     private func startAuditTimer() {
         auditTimer?.invalidate()
-        // The Timer fires on the current run loop; we don't capture self in
-        // the outer closure (no reference) — the inner Task captures self
-        // explicitly weak, which silences the Swift 6 'captured var self'
-        // warning that would fire on an implicit self.
+        // Scheduled from main-actor code on the main run loop, so the block
+        // runs on the main thread. Weak capture on the outer closure, and
+        // assumeIsolated instead of a Task hop: the old form implicitly
+        // captured self strongly outside and weakly inside, and referenced a
+        // captured weak var from concurrently-executing code.
         auditTimer = Timer.scheduledTimer(withTimeInterval: auditIntervalSeconds,
-                                          repeats: true) { _ in
-            Task { @MainActor [weak self] in
-                self?.auditActiveTrip()
-            }
+                                          repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.auditActiveTrip() }
         }
     }
 
@@ -807,9 +931,22 @@ final class TripDetector: NSObject, ObservableObject {
         if checkVehicleSwitch() { return }
 
         let stationaryMin = Date().timeIntervalSince(trip.lastMovementAt) / 60
-        let timeout = Double(store.settings.stationaryTimeoutMinutes)
+        let configuredTimeout = Double(store.settings.stationaryTimeoutMinutes)
+        // The trip's own car Bluetooth gone → engine is off; end after a
+        // short stationary spell instead of the full timeout. Only applies
+        // to trips that were identified by Bluetooth in the first place.
+        let tripHasCarBluetooth = trip.audioDeviceUID != nil || (trip.audioDeviceName?.isEmpty == false)
+        let carBluetoothGone = tripHasCarBluetooth
+            && !AudioRoute.isPairedDevicePresent(uid: trip.audioDeviceUID, name: trip.audioDeviceName)
+        let timeout = carBluetoothGone
+            ? min(configuredTimeout, bluetoothGoneStopMinutes)
+            : configuredTimeout
 
         if stationaryMin >= timeout {
+            if carBluetoothGone && timeout < configuredTimeout {
+                log.log(String(format: "Car Bluetooth disconnected and stationary %.1f min — treating as engine off.",
+                               stationaryMin), level: .info)
+            }
             // GPS-blackout check: "no location updates" and "genuinely
             // parked" are indistinguishable from GPS timing alone (see the
             // constant's doc comment above). Before ending, ask CoreMotion
@@ -822,7 +959,7 @@ final class TripDetector: NSObject, ObservableObject {
                 log.log(String(format: "AUDIT: %.0f min stationary by GPS timing, but CoreMotion confirms automotive activity %.0fs ago — likely a GPS dead zone, not ending.",
                                stationaryMin, Date().timeIntervalSince(lastAuto)), level: .info)
             } else {
-                log.log(String(format: "AUDIT: ending trip — stationary %.0f min >= %.0f min timeout.",
+                log.log(String(format: "AUDIT: ending trip — stationary %.1f min >= %.0f min timeout.",
                                stationaryMin, timeout), level: .info)
                 // A post-relaunch closure is unconfirmed — the app was dead
                 // for the whole gap, so "stationary" here just means
@@ -857,7 +994,7 @@ final class TripDetector: NSObject, ObservableObject {
                 }
                 // Backdate endedAt to when the car actually stopped, not to
                 // whenever this audit finally got to run — see endTrip's doc.
-                endTrip(reason: "stationary \(Int(stationaryMin)) min", at: trip.lastMovementAt)
+                endTrip(reason: String(format: "stationary %.1f min", stationaryMin), at: trip.lastMovementAt)
                 return
             }
         }
@@ -868,7 +1005,8 @@ final class TripDetector: NSObject, ObservableObject {
         if lastLocationAt == .distantPast {
             gpsHealth = "GPS none yet"
         } else {
-            gpsHealth = String(format: "GPS %ds ago · acc %.0f m", secsSinceGPS, max(0, lastAccuracy))
+            gpsHealth = String(format: "GPS %ds ago · acc %.0f m · %d fixes since last beat",
+                               secsSinceGPS, max(0, lastAccuracy), fixesSinceLastHeartbeat)
         }
         let hasPairing = trip.audioDeviceUID != nil || (trip.audioDeviceName?.isEmpty == false)
         let btLabel = hasPairing
@@ -880,14 +1018,39 @@ final class TripDetector: NSObject, ObservableObject {
         } else {
             motionLabel = "no signal yet"
         }
-        log.log(String(format: "AUDIT heartbeat: %.1f km · v %.0f km/h · %.0f min since movement (ends at %.0f) · BT %@ · motion %@ · %@",
+        // Why the background state is on every heartbeat: field logs showed
+        // a 60-second audit timer firing every 300 seconds with each fix
+        // ~290s stale — the signature of an app iOS is not letting run,
+        // even though the code arms background updates correctly. Nothing
+        // in the old heartbeat could distinguish "iOS suspended us",
+        // "Low Power Mode throttled us" and "auto-pause fired", so this
+        // records all three. A healthy background heartbeat reads
+        // `app bg · bgUpdates on · autoPause off · lowPower off` with GPS a
+        // few seconds old; anything else names the culprit directly.
+        let appState: String
+        switch UIApplication.shared.applicationState {
+        case .active:     appState = "fg"
+        case .inactive:   appState = "inactive"
+        case .background: appState = "bg"
+        @unknown default: appState = "?"
+        }
+        let background = String(
+            format: "app %@ · bgUpdates %@ · autoPause %@ · lowPower %@",
+            appState,
+            manager.allowsBackgroundLocationUpdates ? "on" : "OFF",
+            manager.pausesLocationUpdatesAutomatically ? "ON" : "off",
+            ProcessInfo.processInfo.isLowPowerModeEnabled ? "ON" : "off")
+
+        log.log(String(format: "AUDIT heartbeat: %.1f km · v %.0f km/h · %.1f min since movement (ends at %.0f) · BT %@ · motion %@ · %@ · %@",
                        trip.distanceKm,
                        trip.lastSpeedKmh,
                        stationaryMin,
                        timeout,
                        btLabel,
                        motionLabel,
-                       gpsHealth))
+                       gpsHealth,
+                       background))
+        fixesSinceLastHeartbeat = 0
     }
 
     /// Resume the previous trip instead of starting a fresh one when the
@@ -1052,7 +1215,14 @@ final class TripDetector: NSObject, ObservableObject {
         pendingSwitchFirstSeenAt = nil
 
         manager.allowsBackgroundLocationUpdates = true
-        store.settings.energyMode.apply(to: manager)
+        // Auto-pause off for the duration of the trip, whatever the energy
+        // mode says: a paused manager suspends the app, which stops the
+        // audit timer and leaves the trip open until the next launch.
+        store.settings.energyMode.apply(to: manager, duringActiveTrip: true)
+        // The blue status-bar pill. Also the only way to see, at a glance
+        // while driving, whether iOS is actually running background
+        // location for us — if it is missing, it is not.
+        manager.showsBackgroundLocationIndicator = true
         manager.startUpdatingLocation()
         startAuditTimer()
     }
@@ -1062,6 +1232,11 @@ final class TripDetector: NSObject, ObservableObject {
     /// Skips archived vehicles — an archived vehicle should never be silently
     /// reused as the fallback for a brand-new trip.
     private func fallbackVehicle() -> Vehicle? {
+        // The car picked on the Record screen first: the screen showed one car
+        // while an auto trip was filed under another (field test, 19 Oct).
+        if let id = store.preferredVehicleID, let v = store.vehicle(id), v.isActive {
+            return v
+        }
         if let latest = store.trips.sorted(by: { $0.startedAt > $1.startedAt }).first,
            let v = store.vehicle(latest.vehicleID), v.isActive {
             return v
@@ -1095,7 +1270,7 @@ final class TripDetector: NSObject, ObservableObject {
         // two vehicles sharing a UID. Apply the same ambiguity refusal
         // already used for the name-match fallback below, rather than
         // silently picking .first (round-9 adversarial review finding).
-        let uidMatches = pool.filter { !$0.bluetoothUID.isEmpty && $0.bluetoothUID == device.uid }
+        let uidMatches = pool.filter { AudioRoute.sameDevice($0.bluetoothUID, device.uid) }
         if uidMatches.count == 1 {
             return uidMatches[0]
         }
@@ -1107,9 +1282,22 @@ final class TripDetector: NSObject, ObservableObject {
 
         let nameMatches = pool.filter { !$0.bluetoothName.isEmpty && $0.bluetoothName == device.name }
         if nameMatches.count == 1 {
-            log.log("Vehicle matched by BT name only (no UID match): '\(device.name)' → \(nameMatches[0].name).",
-                    level: .warning)
-            return nameMatches[0]
+            var vehicle = nameMatches[0]
+            // The head unit's UID can change (re-pairing, iOS updates). The
+            // name alone is unique among active vehicles here and no vehicle
+            // holds this UID, so adopt it — the next drive matches by UID
+            // again instead of falling back to the name every time.
+            if !device.uid.isEmpty, vehicle.bluetoothUID != device.uid {
+                let oldUID = vehicle.bluetoothUID
+                vehicle.bluetoothUID = device.uid
+                store.updateVehicle(vehicle)
+                log.log("Vehicle matched by BT name only: '\(device.name)' → \(vehicle.name). Updated its saved Bluetooth ID (\(oldUID.isEmpty ? "none" : "changed")) so future drives match by ID.",
+                        level: .info)
+            } else {
+                log.log("Vehicle matched by BT name only (no UID match): '\(device.name)' → \(vehicle.name).",
+                        level: .warning)
+            }
+            return vehicle
         }
         if nameMatches.count > 1 {
             log.log("AMBIGUOUS BT name '\(device.name)' matches \(nameMatches.count) active vehicles (\(nameMatches.map(\.name).joined(separator: ", "))) — refusing to guess. Re-pair each vehicle from its own Bluetooth connection so their IDs are unique.",
@@ -1151,7 +1339,7 @@ final class TripDetector: NSObject, ObservableObject {
         }
 
         let matchesCurrentPairing =
-            (trip.audioDeviceUID != nil && !trip.audioDeviceUID!.isEmpty && currentDevice.uid == trip.audioDeviceUID) ||
+            AudioRoute.sameDevice(currentDevice.uid, trip.audioDeviceUID ?? "") ||
             (trip.audioDeviceName != nil && !trip.audioDeviceName!.isEmpty && currentDevice.name == trip.audioDeviceName)
         guard !matchesCurrentPairing else {
             pendingSwitchVehicleID = nil
@@ -1225,7 +1413,35 @@ final class TripDetector: NSObject, ObservableObject {
         if checkVehicleSwitch() { return }
 
         guard var trip = activeTrip else { return }
+
+        // Close an overdue trip before crediting this fix to it.
+        //
+        // A location can arrive after an arbitrarily long suspension — iOS
+        // wakes the app on a significant change long after the car parked.
+        // The 60s audit timer cannot fire while suspended, so without this
+        // the stale trip just keeps absorbing whatever arrives: field logs
+        // show a trip whose last real movement was 13:46 at 16.8 km being
+        // closed at 20:36 with 19.6 km, the extra 2.8 km being a separate
+        // evening drive merged into the afternoon one. That is the "trip
+        // only ends when the next one starts" behaviour, and it corrupts
+        // both trips at once.
+        //
+        // Re-running the audit rather than ending inline keeps every
+        // existing rule in one place — the CoreMotion dead-zone override so
+        // a tunnel does not split a drive, relaunch-recovery flagging, and
+        // closing at `lastMovementAt` rather than now. None of it depends
+        // on a timer having fired, so it works however long the app was
+        // suspended. If the trip survives the audit (dead zone, or the gap
+        // is under the timeout) we carry on with the refreshed copy.
+        let gapMinutes = Date().timeIntervalSince(trip.lastMovementAt) / 60
+        if gapMinutes >= Double(store.settings.stationaryTimeoutMinutes) {
+            auditActiveTrip()
+            guard let survivingTrip = activeTrip else { return }
+            trip = survivingTrip
+        }
+
         lastLocationAt = Date()
+        fixesSinceLastHeartbeat += 1
         lastAccuracy = location.horizontalAccuracy
         let speedKmh = max(0, location.speed) * 3.6
         trip.lastSpeedKmh = speedKmh
@@ -1251,7 +1467,17 @@ final class TripDetector: NSObject, ObservableObject {
            location.horizontalAccuracy < store.settings.energyMode.maxAcceptableGPSAccuracy {
             let previous = CLLocation(latitude: trip.lastLat, longitude: trip.lastLng)
             let metres = location.distance(from: previous)
-            if metres > 10 {
+            // Speed is checked first, then a jump counts as movement only once
+            // it clears the fix's own accuracy radius. A parked phone's fix
+            // wanders by about that much: field logs show a car parked with
+            // speed 0 km/h at 11–47 m accuracy, whose wobbles of more than 10 m
+            // kept resetting the stationary timer (trips ended 4–8 min after
+            // the engine went off instead of 2) and added 0.1–0.2 km per trip.
+            // Jitter jumps are not credited and do not move `lastLat/lastLng`, so
+            // slow real creeping still adds up once it leaves the radius.
+            let speedIsValid = location.speed >= 0
+            let movingBySpeed = speedIsValid && speedKmh >= movingSpeedKmh
+            if metres > jitterRadius(for: location, trip: trip, movingBySpeed: movingBySpeed) {
                 trip.distanceKm += metres / 1000.0
                 trip.lastLat = location.coordinate.latitude
                 trip.lastLng = location.coordinate.longitude
@@ -1266,12 +1492,13 @@ final class TripDetector: NSObject, ObservableObject {
                 // often reports speed = 0 at the moment of an update (snapshot
                 // between stop-and-go updates), so the speed check alone misses
                 // active driving and the audit then ends the trip as 'stationary'
-                // even though km kept piling up. Anything > 10m of actual GPS
-                // travel is irrefutable movement.
-                trip.lastMovementAt = Date()
+                // even though km kept piling up. Travel beyond the jitter
+                // radius is real movement. Stamped with the fix's own time,
+                // so a trip's backdated end lands on the moment the car stopped.
+                trip.lastMovementAt = min(location.timestamp, Date())
             }
-            if speedKmh >= movingSpeedKmh {   // genuinely moving
-                trip.lastMovementAt = Date()
+            if movingBySpeed {
+                trip.lastMovementAt = min(location.timestamp, Date())
             }
         }
         activeTrip = trip
@@ -1283,6 +1510,30 @@ final class TripDetector: NSObject, ObservableObject {
         // doesn't call this method while genuinely stationary anyway (no
         // update exceeds distanceFilter), so centralizing costs at most
         // ~60s of extra detection latency against a multi-minute timeout.
+    }
+
+    /// How far a fix must land from the last credited point before it counts
+    /// as travel. A fix with a real speed reading only needs the old 10 m
+    /// step; without one, it must clear 1.5× its accuracy radius. Once the
+    /// trip's car Bluetooth has gone (engine off), only a jump clearly beyond
+    /// GPS wobble counts without a speed reading: 2× accuracy, at least 30 m.
+    private func jitterRadius(for location: CLLocation, trip: ActiveTripState,
+                              movingBySpeed: Bool) -> CLLocationDistance {
+        let tripHasCarBluetooth = trip.audioDeviceUID != nil || (trip.audioDeviceName?.isEmpty == false)
+        let engineOff = tripHasCarBluetooth
+            && !AudioRoute.isPairedDevicePresent(uid: trip.audioDeviceUID, name: trip.audioDeviceName)
+        return Self.jitterRadius(accuracy: location.horizontalAccuracy,
+                                 movingBySpeed: movingBySpeed, engineOff: engineOff)
+    }
+
+    /// The rule itself, kept free of CoreLocation/Bluetooth state so it can
+    /// be unit-tested against readings from real detection logs.
+    nonisolated static func jitterRadius(accuracy: CLLocationAccuracy, movingBySpeed: Bool,
+                                         engineOff: Bool) -> CLLocationDistance {
+        if movingBySpeed { return minStepMetres }
+        let accuracy = max(0, accuracy)
+        if engineOff { return max(engineOffMinStepMetres, accuracy * 2) }
+        return max(minStepMetres, accuracy * jitterAccuracyFactor)
     }
 
     // MARK: - Trip end
@@ -1447,13 +1698,8 @@ final class TripDetector: NSObject, ObservableObject {
     }
 
     private static func reverseGeocode(_ coord: CLLocationCoordinate2D) async -> String {
-        let geocoder = CLGeocoder()
         let location = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
-        if let placemark = try? await geocoder.reverseGeocodeLocation(location).first {
-            let parts = [placemark.thoroughfare, placemark.locality].compactMap { $0 }
-            return parts.joined(separator: ", ")
-        }
-        return ""
+        return await Geocoding.shortAddress(for: location)
     }
 
     // MARK: - Audio route changes (vehicle identification only — never ends a trip)
@@ -1464,8 +1710,12 @@ final class TripDetector: NSObject, ObservableObject {
               let reason = AVAudioSession.RouteChangeReason(rawValue: raw) else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
-            self.log.log("Audio route change: \(reason)")
-            guard self.activeTrip != nil else { return }
+            let output = AudioRoute.currentBluetoothOutput().map { "'\($0.name)'" } ?? "no Bluetooth output"
+            self.log.log("Audio route change: \(Self.describe(reason)) · now \(output)")
+            if self.activeTrip == nil {
+                if reason == .newDeviceAvailable { self.startTripFromCarBluetooth() }
+                return
+            }
 
             // Immediate vehicle-switch/identification check — a new car's
             // Bluetooth becoming the active route is exactly what
@@ -1485,6 +1735,62 @@ final class TripDetector: NSObject, ObservableObject {
                 self.auditActiveTrip()
             }
         }
+    }
+
+    /// Readable name for the log; the raw enum prints as `rawValue: 3`.
+    private static func describe(_ reason: AVAudioSession.RouteChangeReason) -> String {
+        switch reason {
+        case .unknown:                  return "unknown"
+        case .newDeviceAvailable:       return "device connected"
+        case .oldDeviceUnavailable:     return "device disconnected"
+        case .categoryChange:           return "category change"
+        case .override:                 return "override"
+        case .wakeFromSleep:            return "wake from sleep"
+        case .noSuitableRouteForCategory: return "no suitable route"
+        case .routeConfigurationChange: return "route configuration change"
+        @unknown default:               return "reason \(reason.rawValue)"
+        }
+    }
+
+    /// Car Bluetooth connected while no trip is running: that is the
+    /// strongest "a drive is starting" signal available, so skip the
+    /// speed/motion verification. Only fires for a Bluetooth device that
+    /// matches a registered vehicle, and only while auto-detect is on.
+    /// Sitting in a parked car with the engine running can start a trip
+    /// this way; it never moves, so it is discarded at the end like any
+    /// other sub-200 m trip.
+    private func startTripFromCarBluetooth() {
+        guard isEnabled, activeTrip == nil else { return }
+        if let manual = manualLocationManager, manual.isTracking { return }
+        let device = AudioRoute.currentBluetoothOutput()
+        guard let vehicle = matchVehicle(for: device) else { return }
+
+        // Verification already running for this drive: Bluetooth settles it.
+        if let c = candidate {
+            verificationDeadline?.invalidate()
+            verificationDeadline = nil
+            candidate = nil
+            clearPersistedCandidate()
+            log.log("Car Bluetooth connected during verification — starting trip for \(vehicle.name).", level: .info)
+            commitTripStart(at: c.startLocation, startedAt: c.startedAt,
+                            vehicle: vehicle, device: device)
+            return
+        }
+
+        // Recent position available: start right here.
+        if let location = manager.location,
+           Date().timeIntervalSince(location.timestamp) < 120,
+           location.horizontalAccuracy >= 0 {
+            log.log("Car Bluetooth connected — starting trip for \(vehicle.name).", level: .info)
+            commitTripStart(at: location, startedAt: Date(), vehicle: vehicle, device: device)
+            return
+        }
+
+        // No fresh position: ask for one. It arrives through
+        // didUpdateLocations → handleSignificantLocation, whose Bluetooth
+        // fast path starts the trip because the car is still connected.
+        log.log("Car Bluetooth connected — requesting a position to start the trip.", level: .info)
+        manager.requestLocation()
     }
 
     // MARK: - Persistence of active trip + verification candidate
@@ -1670,7 +1976,14 @@ final class TripDetector: NSObject, ObservableObject {
         if motion.isAvailable { motion.start() }
 
         manager.allowsBackgroundLocationUpdates = true
-        store.settings.energyMode.apply(to: manager)
+        // Auto-pause off for the duration of the trip, whatever the energy
+        // mode says: a paused manager suspends the app, which stops the
+        // audit timer and leaves the trip open until the next launch.
+        store.settings.energyMode.apply(to: manager, duringActiveTrip: true)
+        // The blue status-bar pill. Also the only way to see, at a glance
+        // while driving, whether iOS is actually running background
+        // location for us — if it is missing, it is not.
+        manager.showsBackgroundLocationIndicator = true
         manager.startUpdatingLocation()
         startAuditTimer()
 
@@ -1733,7 +2046,13 @@ extension TripDetector: CLLocationManagerDelegate {
 
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         Task { @MainActor [weak self] in
-            self?.log.log("Location error: \(error.localizedDescription)", level: .error)
+            // kCLErrorLocationUnknown is iOS saying "no fix right now, still
+            // trying" — routine in garages and tunnels, not a failure.
+            if (error as? CLError)?.code == .locationUnknown {
+                self?.log.log("Position temporarily unavailable — still trying.")
+            } else {
+                self?.log.log("Location error: \(error.localizedDescription)", level: .error)
+            }
         }
     }
 

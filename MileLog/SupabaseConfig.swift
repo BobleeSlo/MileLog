@@ -33,4 +33,10 @@ enum SupabaseConfig {
     /// (`http://localhost:3000` on a default project) and the user can
     /// never actually get back in — see MileLog/README.md.
     static let passwordResetRedirect = URL(string: "milelog://auth/reset")!
+
+    /// Where the sign-up confirmation email sends the user back to. Same two
+    /// requirements as `passwordResetRedirect`. Sign-up used to pass no
+    /// redirect at all, so the confirmation link always ended on the Site
+    /// URL — a dead `localhost:3000` page.
+    static let emailConfirmRedirect = URL(string: "milelog://auth/confirm")!
 }

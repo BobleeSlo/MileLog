@@ -2,7 +2,9 @@ import Foundation
 import Combine
 
 /// In-memory + on-disk debug log of detection events.
-/// Capped at 100 entries so it never grows unbounded.
+/// Keeps the last 7 days, capped at 2,000 entries so it never grows
+/// unbounded. The old cap of 100 held about 1.5 hours of driving (one
+/// heartbeat a minute), so an exported log had usually lost the morning.
 @MainActor
 final class DetectionLog: ObservableObject {
 
@@ -27,7 +29,8 @@ final class DetectionLog: ObservableObject {
     @Published private(set) var entries: [Entry] = []
 
     private let url: URL
-    private let limit = 100
+    private let limit = 2_000
+    private let maxAge: TimeInterval = 7 * 24 * 3600
 
     init() {
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -38,7 +41,7 @@ final class DetectionLog: ObservableObject {
     func log(_ message: String, level: Level = .info) {
         let entry = Entry(level: level, message: message)
         entries.insert(entry, at: 0)
-        if entries.count > limit { entries = Array(entries.prefix(limit)) }
+        trim()
         save()
     }
 
@@ -57,6 +60,7 @@ final class DetectionLog: ObservableObject {
         let header = """
         MileLog Detection Log
         Generated: \(df.string(from: Date()))
+        Version: \(AppVersion.display) · Backend: \(AppVersion.backendHost)
         Entries: \(entries.count)
         --------------------------------------------------------------------------------
         """
@@ -83,10 +87,20 @@ final class DetectionLog: ObservableObject {
         }
     }
 
+    /// Entries are newest first, so both limits drop from the end.
+    private func trim() {
+        let cutoff = Date().addingTimeInterval(-maxAge)
+        if let firstExpired = entries.firstIndex(where: { $0.timestamp < cutoff }) {
+            entries.removeSubrange(firstExpired...)
+        }
+        if entries.count > limit { entries = Array(entries.prefix(limit)) }
+    }
+
     private func load() {
         guard let data = try? Data(contentsOf: url),
               let decoded = try? JSONDecoder().decode([Entry].self, from: data) else { return }
         entries = decoded
+        trim()
     }
 
     private func save() {

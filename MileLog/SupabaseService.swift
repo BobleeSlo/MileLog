@@ -10,6 +10,9 @@ final class SupabaseService: ObservableObject {
     @Published private(set) var isAuthenticated = false
     @Published private(set) var userEmail: String?
     @Published private(set) var isWorking = false
+    /// Set when a sign-up confirmation link fails (expired or already used),
+    /// so the sign-in screen offers to send a new one.
+    @Published var confirmationLinkFailed = false
     /// False until the launch-time session restore has resolved one way or
     /// the other. `isAuthenticated` starts `false` and is only corrected by
     /// a detached Task in `init`, so without this third state every cold
@@ -87,8 +90,32 @@ final class SupabaseService: ObservableObject {
     func signUp(email: String, password: String) async throws {
         isWorking = true
         defer { isWorking = false }
-        _ = try await client.auth.signUp(email: email, password: password)
+        let response = try await client.auth.signUp(email: email, password: password,
+                                                    redirectTo: SupabaseConfig.emailConfirmRedirect)
+        // A sign-up for an address that already has an account succeeds on
+        // paper but sends no email (so outsiders can't probe which addresses
+        // are registered). The tell is a user with no identities. Without
+        // this check the app said "Account created, check your email" and
+        // the user waited for an email that was never coming.
+        if response.user.identities?.isEmpty == true {
+            throw SignUpError.alreadyRegistered
+        }
         await refreshAuth()
+    }
+
+    enum SignUpError: LocalizedError {
+        case alreadyRegistered
+        // Matched by AuthView.friendlyAuthError's "already registered" case.
+        var errorDescription: String? { "User already registered" }
+    }
+
+    /// Sends the sign-up confirmation email again — the way out when the
+    /// first link expired (they last an hour and work once).
+    func resendConfirmation(email: String) async throws {
+        isWorking = true
+        defer { isWorking = false }
+        try await client.auth.resend(email: email, type: .signup,
+                                     emailRedirectTo: SupabaseConfig.emailConfirmRedirect)
     }
 
     func signIn(email: String, password: String) async throws {
@@ -117,9 +144,10 @@ final class SupabaseService: ObservableObject {
         )
     }
 
-    /// Completes a password reset: exchanges the emailed recovery link for
-    /// a session, so the subsequent password update is authorized.
-    func handleRecoveryLink(_ url: URL) async throws {
+    /// Completes an emailed auth link — a password reset or a sign-up
+    /// confirmation — by exchanging it for a session. Throws for an expired
+    /// or already-used link, which arrives carrying `error_code=otp_expired`.
+    func handleAuthLink(_ url: URL) async throws {
         isWorking = true
         defer { isWorking = false }
         try await client.auth.session(from: url)
@@ -186,6 +214,16 @@ final class SupabaseService: ObservableObject {
         try await client.from("trips").delete().eq("id", value: id).execute()
     }
 
+    /// Repoints a trip's GPS points and receipts at another trip. Both child
+    /// tables cascade on delete, so this has to run before the source trip's
+    /// row is removed when two fragments are merged — otherwise the merged
+    /// trip loses half its map and any receipts attached to the second part.
+    func moveTripChildren(from source: UUID, to target: UUID) async throws {
+        let patch = TripIDPatchDTO(trip_id: target)
+        try await client.from("trip_points").update(patch).eq("trip_id", value: source).execute()
+        try await client.from("receipts").update(patch).eq("trip_id", value: source).execute()
+    }
+
     // MARK: - User settings
 
     func pushSettings(_ settings: UserSettings) async throws {
@@ -231,7 +269,10 @@ final class SupabaseService: ObservableObject {
     // MARK: - Receipts (Phase 4d)
 
     func uploadReceiptPhoto(_ data: Data, fileName: String) async throws -> String {
-        let path = "\(try await currentUserId().uuidString)/\(fileName)"
+        // Lowercased: the bucket's policies compare the first folder with
+        // `auth.uid()::text`, which Postgres writes in lower case, while
+        // `uuidString` is upper case — every upload was rejected with a 400.
+        let path = "\(try await currentUserId().uuidString.lowercased())/\(fileName)"
         try await client.storage
             .from("receipts")
             .upload(path, data: data, options: .init(contentType: "image/jpeg", upsert: true))
@@ -282,7 +323,12 @@ final class SupabaseService: ObservableObject {
             .eq("id", value: receipt.id)
             .execute()
         if !receipt.photoPath.isEmpty {
-            try? await client.storage.from("receipts").remove(paths: [receipt.photoPath])
+            // `remove` returns the deleted objects; discarded on purpose.
+            // The row is already gone, so a failed blob delete leaves an
+            // orphaned file rather than a broken receipt — not worth
+            // failing the call for.
+            _ = try? await client.storage.from("receipts")
+                .remove(paths: [receipt.photoPath])
         }
     }
 

@@ -15,7 +15,7 @@ struct DetectionLogView: View {
                 LabeledContent("Permission", value: detector.permission.userText)
                 LabeledContent("Active trip") {
                     if let trip = detector.activeTrip {
-                        Text(String(format: "%.1f km", trip.distanceKm))
+                        Text(Format.km(trip.distanceKm))
                             .foregroundColor(.blue)
                     } else {
                         Text("none").foregroundColor(.secondary)
@@ -76,12 +76,12 @@ struct DetectionLogView: View {
 private extension CLAuthorizationStatus {
     var userText: String {
         switch self {
-        case .notDetermined:        return "Not asked yet"
-        case .restricted:           return "Restricted"
-        case .denied:               return "Denied — fix in Settings"
-        case .authorizedAlways:     return "Always ✓"
-        case .authorizedWhenInUse:  return "While using — needs upgrade"
-        @unknown default:           return "Unknown"
+        case .notDetermined:        return String(localized: "Not asked yet", bundle: .app)
+        case .restricted:           return String(localized: "Restricted", bundle: .app)
+        case .denied:               return String(localized: "Denied — fix in Settings", bundle: .app)
+        case .authorizedAlways:     return String(localized: "Always ✓", bundle: .app)
+        case .authorizedWhenInUse:  return String(localized: "While using — needs upgrade", bundle: .app)
+        @unknown default:           return String(localized: "Unknown", bundle: .app)
         }
     }
 }

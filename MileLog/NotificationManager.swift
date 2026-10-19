@@ -40,11 +40,11 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
 
     private func registerCategories() {
         let business = UNNotificationAction(identifier: "CLASSIFY_BUSINESS",
-                                            title: String(localized: "Business"), options: [])
+                                            title: String(localized: "Business", bundle: .app), options: [])
         let commute  = UNNotificationAction(identifier: "CLASSIFY_COMMUTE",
-                                            title: String(localized: "Commute"),  options: [])
+                                            title: String(localized: "Commute", bundle: .app),  options: [])
         let priv     = UNNotificationAction(identifier: "CLASSIFY_PRIVATE",
-                                            title: String(localized: "Private"),  options: [])
+                                            title: String(localized: "Private", bundle: .app),  options: [])
 
         let category = UNNotificationCategory(
             identifier: classifyCategoryID,
@@ -59,13 +59,13 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
 
     func sendClassifyNotification(for trip: Trip) async {
         let content = UNMutableNotificationContent()
-        content.title = String(localized: "Trip ended")
-        let distanceText = String(format: "%.1f km", trip.distanceKm)
+        content.title = String(localized: "Trip ended", bundle: .app)
+        let distanceText = Format.km(trip.distanceKm)
         content.subtitle = "\(distanceText) · \(trip.type.label)"
         if trip.customerName.isEmpty {
-            content.body = String(localized: "Tap to classify, or pick one below.")
+            content.body = String(localized: "Tap to classify, or pick one below.", bundle: .app)
         } else {
-            content.body = String(localized: "Customer: \(trip.customerName). Tap to confirm or change.")
+            content.body = String(localized: "Customer: \(trip.customerName). Tap to confirm or change.", bundle: .app)
         }
         content.categoryIdentifier = classifyCategoryID
         content.userInfo = ["tripID": trip.id.uuidString]
@@ -87,8 +87,8 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     /// case went undetected for a full week because of exactly this silence.
     func sendPermissionDowngradedNotification() async {
         let content = UNMutableNotificationContent()
-        content.title = String(localized: "Auto-detect has stopped")
-        content.body = String(localized: "Location permission dropped to 'While Using' — trips won't be tracked in the background anymore. Tap to fix it in Settings.")
+        content.title = String(localized: "Auto-detect has stopped", bundle: .app)
+        content.body = String(localized: "Location permission dropped to 'While Using' — trips won't be tracked in the background anymore. Tap to fix it in Settings.", bundle: .app)
         content.sound = .default
 
         let request = UNNotificationRequest(
@@ -107,8 +107,8 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     /// (round-4 UX review finding).
     func sendNoVehicleTripDroppedNotification() async {
         let content = UNMutableNotificationContent()
-        content.title = String(localized: "Trip not saved")
-        content.body = String(localized: "A drive was detected, but there's no vehicle to log it against. Add your car in MileLog so the next one is saved.")
+        content.title = String(localized: "Trip not saved", bundle: .app)
+        content.body = String(localized: "A drive was detected, but there's no vehicle to log it against. Add your car in MileLog so the next one is saved.", bundle: .app)
         content.sound = .default
 
         let request = UNNotificationRequest(

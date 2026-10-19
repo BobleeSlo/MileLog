@@ -190,12 +190,6 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
     /// Best-effort human-readable address for a coordinate ("Street, City").
     func reverseGeocode(_ location: CLLocation?) async -> String {
         guard let location else { return "" }
-        let geocoder = CLGeocoder()
-        if let placemarks = try? await geocoder.reverseGeocodeLocation(location),
-           let placemark = placemarks.first {
-            let parts = [placemark.thoroughfare, placemark.locality].compactMap { $0 }
-            return parts.joined(separator: ", ")
-        }
-        return ""
+        return await Geocoding.shortAddress(for: location)
     }
 }

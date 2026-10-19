@@ -7,6 +7,9 @@ struct AuthView: View {
     @State private var isSignUp = false
     @State private var errorMessage: String?
     @State private var infoMessage: String?
+    /// Shown after sign-up and after an "email not confirmed" sign-in error,
+    /// so an expired confirmation link is never a dead end.
+    @State private var offerResendConfirmation = false
 
     var body: some View {
         NavigationStack {
@@ -58,6 +61,14 @@ struct AuthView: View {
                     // their entire mileage history (round-5 UX review
                     // finding). Only offered on the sign-in side, where it
                     // makes sense.
+                    if !isSignUp && (offerResendConfirmation || supabase.confirmationLinkFailed) {
+                        Button("Resend confirmation email") {
+                            Task { await resendConfirmation() }
+                        }
+                        .font(.footnote)
+                        .disabled(supabase.isWorking || !email.contains("@"))
+                    }
+
                     if !isSignUp {
                         Button("Forgot password?") {
                             Task { await sendReset() }
@@ -91,7 +102,18 @@ struct AuthView: View {
             // exists for that address — confirming which addresses are
             // registered would leak account existence to anyone who can
             // type an email in.
-            infoMessage = "If an account exists for \(email), a password reset link is on its way."
+            infoMessage = String(localized: "If an account exists for \(email), a password reset link is on its way.", bundle: .app)
+        } catch {
+            errorMessage = Self.friendlyAuthError(error)
+        }
+    }
+
+    private func resendConfirmation() async {
+        errorMessage = nil
+        infoMessage = nil
+        do {
+            try await supabase.resendConfirmation(email: email)
+            infoMessage = "A new confirmation link is on its way to \(email). Open it on this iPhone."
         } catch {
             errorMessage = Self.friendlyAuthError(error)
         }
@@ -108,15 +130,28 @@ struct AuthView: View {
             if isSignUp {
                 try await supabase.signUp(email: email, password: password)
                 if !supabase.isAuthenticated {
-                    infoMessage = "Account created. Check your email to confirm, then sign in."
+                    infoMessage = String(localized: "Account created. Open the confirmation email on this iPhone to finish signing up.", bundle: .app)
                     isSignUp = false
+                    offerResendConfirmation = true
                 }
             } else {
                 try await supabase.signIn(email: email, password: password)
+                // The server accepted the password but no session survived
+                // (e.g. the Keychain refused to store it). Previously the
+                // screen just sat there with no message at all.
+                if !supabase.isAuthenticated {
+                    errorMessage = String(localized: "Signed in, but MileLog couldn't keep you signed in on this device. Restart the app and try again.", bundle: .app)
+                }
             }
         } catch {
             errorMessage = Self.friendlyAuthError(error)
+            if Self.isEmailNotConfirmed(error) { offerResendConfirmation = true }
         }
+    }
+
+    private static func isEmailNotConfirmed(_ error: Error) -> Bool {
+        let raw = error.localizedDescription.lowercased()
+        return raw.contains("email not confirmed") || raw.contains("email_not_confirmed")
     }
 
     /// The app's front door showed raw SDK/network error text
@@ -127,10 +162,13 @@ struct AuthView: View {
     private static func friendlyAuthError(_ error: Error) -> String {
         let raw = error.localizedDescription.lowercased()
         if raw.contains("invalid login credentials") || raw.contains("invalid_grant") {
-            return "That email or password isn't right. Check them and try again."
+            return String(localized: "That email or password isn't right. Check them and try again.", bundle: .app)
+        }
+        if raw.contains("email not confirmed") || raw.contains("email_not_confirmed") {
+            return String(localized: "Confirm your email first — open the link we sent you, or resend it below.", bundle: .app)
         }
         if raw.contains("already registered") || raw.contains("already exists") {
-            return "An account with that email already exists — try signing in instead."
+            return String(localized: "An account with that email already exists — try signing in instead.", bundle: .app)
         }
         // Narrower than a bare "password" match: Supabase's own password
         // policy (minimum length, breach checks, complexity) is server-
@@ -140,11 +178,11 @@ struct AuthView: View {
         // actually be a length issue at all (round-3 UX review finding).
         if raw.contains("password")
             && (raw.contains("short") || raw.contains("least") || raw.contains("weak") || raw.contains("characters")) {
-            return "Password needs to be at least 6 characters."
+            return String(localized: "Password needs to be at least 6 characters.", bundle: .app)
         }
         if raw.contains("network") || raw.contains("offline") || raw.contains("internet connection") {
-            return "Couldn't connect. Check your internet connection and try again."
+            return String(localized: "Couldn't connect. Check your internet connection and try again.", bundle: .app)
         }
-        return "Something went wrong. Please try again in a moment."
+        return String(localized: "Something went wrong. Please try again in a moment.", bundle: .app)
     }
 }

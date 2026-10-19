@@ -1,0 +1,14 @@
+# Credentials — see Config/Secrets.xcconfig.example
+Config/Secrets.xcconfig
+
+# Per-user Xcode state
+xcuserdata/
+*.xcuserstate
+
+# Build output and macOS noise
+build/
+DerivedData/
+.DS_Store
+
+# Backups written by tools/*.py
+*.bak

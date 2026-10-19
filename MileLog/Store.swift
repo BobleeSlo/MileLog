@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import CoreLocation
 import SwiftUI   // for Array.remove(atOffsets:) used by ForEach.onDelete bridging
 
 /// Local-first data store. Persists vehicles, trips and settings as JSON in the
@@ -105,8 +106,25 @@ final class Store: ObservableObject {
     /// Set after the user signs in; when present, mutations are mirrored to Supabase.
     private weak var supabase: SupabaseService?
 
+    /// The car last picked on the Record screen. Auto-detect uses it when
+    /// Bluetooth can't tell which car is moving, so the car the screen shows
+    /// and the car an auto trip is filed under agree. A vehicle UUID belongs
+    /// to one account, so a stale value after an account switch just fails
+    /// to match and is ignored.
+    var preferredVehicleID: UUID? {
+        get { UserDefaults.standard.string(forKey: "MileLog.preferredVehicleID").flatMap(UUID.init(uuidString:)) }
+        set { UserDefaults.standard.set(newValue?.uuidString, forKey: "MileLog.preferredVehicleID") }
+    }
+
     /// Read-only access for collaborators (TripDetector pushes GPS points + receipts).
     var supabaseService: SupabaseService? { supabase }
+
+    /// Trips whose last push failed. Retried after the next successful push
+    /// and whenever the app comes to the foreground, instead of only at the
+    /// next launch's full sync. In memory only: that full sync re-pushes
+    /// every trip anyway, so nothing is lost if the app is killed.
+    private var unsyncedTripIDs: Set<UUID> = []
+    private var isRetryingUnsyncedTrips = false
 
     /// Set by the app on launch (weak — TripDetector already holds a strong
     /// reference to this Store, so this is the non-owning direction). Lets
@@ -263,6 +281,10 @@ final class Store: ObservableObject {
     /// `deleteTrips`/`updateTrip` (both id-keyed) act on the wrong copy
     /// (round-4 adversarial review finding).
     func addTrip(_ trip: Trip) {
+        var trip = trip
+        // Stored at the 0.1 km every screen and report shows, so a month's
+        // total is exactly the sum of its rows (GPS gives e.g. 3.430579).
+        trip.distanceKm = trip.distanceKm.roundedToTenthKm
         trips.removeAll { $0.id == trip.id }
         trips.append(trip)
         save()
@@ -351,7 +373,7 @@ final class Store: ObservableObject {
             // here, leaving the one field that actually controls the
             // reported €-amount silently changeable via this same stale-
             // snapshot path (round-12 adversarial review finding).
-            merged.distanceKm = trip.distanceKm
+            merged.distanceKm = trip.distanceKm.roundedToTenthKm
             merged.type = trip.type
             // Lets TripEditor's Vehicle picker (round-16 addition) actually
             // take effect — auto-detection's Bluetooth-fallback path can
@@ -478,6 +500,123 @@ final class Store: ObservableObject {
         }
     }
 
+    // MARK: - Merging split trips
+
+    /// Two consecutive trips that look like one drive split by a short stop
+    /// or a tracking gap: same vehicle, nothing else driven in between, the
+    /// second starting within `mergeMaxGapMinutes` of the first ending and
+    /// within `mergeMaxGapMetres` of where it ended. Locked trips never
+    /// qualify — they are the tamper-evident record.
+    struct MergeCandidate: Identifiable, Hashable {
+        let first: Trip
+        let second: Trip
+        var id: String { "\(first.id.uuidString)-\(second.id.uuidString)" }
+        var gapMinutes: Double { second.startedAt.timeIntervalSince(first.endedAt) / 60 }
+        var gapMetres: Double? { Store.gapMetres(first, second) }
+    }
+
+    static let mergeMaxGapMinutes: Double = 10
+    static let mergeMaxGapMetres: Double = 300
+
+    /// Straight-line distance from where `first` ended to where `second`
+    /// started, or nil when either coordinate is missing.
+    static func gapMetres(_ first: Trip, _ second: Trip) -> Double? {
+        guard let aLat = first.endLat, let aLng = first.endLng,
+              let bLat = second.startLat, let bLng = second.startLng else { return nil }
+        return CLLocation(latitude: aLat, longitude: aLng)
+            .distance(from: CLLocation(latitude: bLat, longitude: bLng))
+    }
+
+    /// Every adjacent pair that qualifies, oldest first. Adjacency is by
+    /// start time across ALL vehicles, so a trip in another car in between
+    /// breaks the pair.
+    var mergeCandidates: [MergeCandidate] {
+        let sorted = trips.sorted { $0.startedAt < $1.startedAt }
+        return zip(sorted, sorted.dropFirst()).compactMap { a, b in
+            guard a.vehicleID == b.vehicleID, !a.isLocked, !b.isLocked else { return nil }
+            let gap = b.startedAt.timeIntervalSince(a.endedAt) / 60
+            // A minute of tolerance below zero: a start anchored back to the
+            // parking spot can land fractionally before the previous end.
+            guard gap >= -1, gap <= Self.mergeMaxGapMinutes else { return nil }
+            guard let metres = Self.gapMetres(a, b), metres <= Self.mergeMaxGapMetres else { return nil }
+            return MergeCandidate(first: a, second: b)
+        }
+    }
+
+    // nonisolated: the project defaults every type to the main actor, and an
+    // Error has to be usable from any context.
+    nonisolated enum MergeError: LocalizedError {
+        case tripsChanged
+        var errorDescription: String? {
+            "These trips changed since the list was shown — reopen it and try again."
+        }
+    }
+
+    /// Merges the chosen pairs in time order. A chain A+B, B+C ends up as one
+    /// trip: once B is absorbed into A, the B+C pair continues from A.
+    /// Returns how many merges were made. Stops at the first failure; every
+    /// merge before it is complete (cloud and local), nothing after it runs.
+    @discardableResult
+    func mergeTrips(_ pairs: [MergeCandidate]) async throws -> Int {
+        var absorbedInto: [UUID: UUID] = [:]
+        func resolve(_ id: UUID) -> UUID {
+            var current = id
+            while let next = absorbedInto[current] { current = next }
+            return current
+        }
+        var count = 0
+        for pair in pairs.sorted(by: { $0.first.startedAt < $1.first.startedAt }) {
+            let targetID = resolve(pair.first.id)
+            try await mergeTrip(pair.second.id, into: targetID)
+            absorbedInto[pair.second.id] = targetID
+            count += 1
+        }
+        return count
+    }
+
+    /// Appends trip `sourceID` onto trip `targetID`: the target keeps its
+    /// start, classification and id; it takes the source's end, and its
+    /// distance becomes both distances plus the straight-line gap between
+    /// them. Cloud first — upsert the merged row, move the source's GPS
+    /// points and receipts across, delete the source — and only then the
+    /// local copy, so a failure part-way leaves the local data untouched.
+    private func mergeTrip(_ sourceID: UUID, into targetID: UUID) async throws {
+        guard let target = trips.first(where: { $0.id == targetID }),
+              let source = trips.first(where: { $0.id == sourceID }),
+              target.vehicleID == source.vehicleID,
+              !target.isLocked, !source.isLocked
+        else { throw MergeError.tripsChanged }
+
+        var merged = target
+        merged.endedAt = source.endedAt
+        merged.endAddress = source.endAddress
+        merged.endLat = source.endLat
+        merged.endLng = source.endLng
+        merged.distanceKm = target.distanceKm + source.distanceKm
+            + (Self.gapMetres(target, source) ?? 0) / 1000
+        if merged.purpose.isEmpty { merged.purpose = source.purpose }
+        if merged.customerName.isEmpty { merged.customerName = source.customerName }
+        merged.notes = [target.notes, source.notes].filter { !$0.isEmpty }.joined(separator: "\n")
+        merged.reviewedAt = target.reviewedAt ?? source.reviewedAt
+
+        if let supabase {
+            try await supabase.pushTrip(merged)
+            try await supabase.moveTripChildren(from: source.id, to: target.id)
+            try await supabase.deleteTrip(id: source.id)
+        }
+
+        trips.removeAll { $0.id == source.id }
+        if let idx = trips.firstIndex(where: { $0.id == target.id }) {
+            trips[idx] = merged
+        }
+        deletedTripIDs.insert(source.id)
+        save()
+        detectionLog?.log(String(format: "Merged split trip: %@ %.1f km + %.1f km → %.1f km.",
+                                 target.startedAt.formatted(date: .abbreviated, time: .shortened),
+                                 target.distanceKm, source.distanceKm, merged.distanceKm),
+                          level: .info)
+    }
+
     /// Ids the user has deliberately deleted, persisted so `initialSync`'s
     /// merge-based pull (see its own doc comment) never re-adds one of them.
     /// Without this, a delete whose `supabase.deleteTrip`/`deleteVehicle`
@@ -522,6 +661,7 @@ final class Store: ObservableObject {
             cal.dateComponents([.year, .month], from: trip.startedAt)
         }
         let df = DateFormatter()
+        df.locale = Format.locale   // month headers in the app's language
         df.dateFormat = "LLLL yyyy"
 
         return groups.keys
@@ -531,11 +671,11 @@ final class Store: ObservableObject {
                 let date = cal.date(from: comps) ?? Date()
                 let businessKm = items
                     .filter { $0.type == .business }
-                    .reduce(0) { $0 + $1.distanceKm }
+                    .reduce(0) { $0 + $1.distanceKm.roundedToTenthKm }
                 return MonthSection(
                     title: df.string(from: date),
                     trips: items,
-                    summary: String(format: "%.0f km business", businessKm)
+                    businessKm: businessKm
                 )
             }
     }
@@ -543,6 +683,7 @@ final class Store: ObservableObject {
     // MARK: - Vehicles
 
     func addVehicle(_ vehicle: Vehicle) {
+        let vehicle = vehicle.tidied()
         vehicles.append(vehicle)
         save()
         push(vehicle)
@@ -561,6 +702,7 @@ final class Store: ObservableObject {
         // adversarial review finding: this was the one remaining place
         // still using the blind-overwrite pattern updateTrip was fixed
         // for).
+        let vehicle = vehicle.tidied()
         var merged = vehicles[idx]
         // `type`/`name`/`licensePlate`/`vehicleTypeDescription`/`seatCount`
         // are all printed straight from this live Vehicle into the
@@ -783,7 +925,9 @@ final class Store: ObservableObject {
         await flushPendingAuditEntries()
 
         for vehicle in vehicles { try? await supabase.pushVehicle(vehicle) }
-        for trip in trips       { try? await supabase.pushTrip(trip) }
+        for trip in trips {
+            if (try? await supabase.pushTrip(trip)) != nil { markTripSynced(trip.id) }
+        }
         // Only assert local settings over the cloud once this device has
         // reconciled settings with THIS account (see
         // `settingsReconciledUserID`). Before that we may be holding
@@ -895,6 +1039,8 @@ final class Store: ObservableObject {
         Task {
             do {
                 try await supabase.pushTrip(trip)
+                markTripSynced(trip.id)
+                retryUnsyncedTrips()
             } catch {
                 // Round 20 reacted to a rejected push by pulling the
                 // authoritative row and overwriting local state if it
@@ -919,8 +1065,42 @@ final class Store: ObservableObject {
                 // keeps retrying with the local edit intact regardless —
                 // succeeding once connectivity returns, or failing (and
                 // logging) again if it's a genuine, permanent rejection.
-                detectionLog?.log("A trip failed to sync (offline, or rejected if locked/changed on another device) — will keep retrying.",
+                unsyncedTripIDs.insert(trip.id)
+                detectionLog?.log("A trip failed to sync (offline, or rejected if locked/changed on another device) — \(unsyncedTripIDs.count) waiting; retrying after the next successful sync or when MileLog is opened.",
                                    level: .warning)
+            }
+        }
+    }
+
+    /// Clears a trip from the retry set, logging when it had been waiting.
+    private func markTripSynced(_ id: UUID) {
+        guard unsyncedTripIDs.remove(id) != nil else { return }
+        let waiting = unsyncedTripIDs.count
+        detectionLog?.log(waiting == 0
+                          ? "Trip synced after retry — all trips are backed up."
+                          : "Trip synced after retry — \(waiting) still waiting.",
+                          level: .info)
+    }
+
+    /// Re-pushes trips whose last push failed. Stops at the first failure
+    /// (still offline) and leaves the rest for the next attempt.
+    func retryUnsyncedTrips() {
+        guard let supabase, !unsyncedTripIDs.isEmpty, !isRetryingUnsyncedTrips else { return }
+        isRetryingUnsyncedTrips = true
+        Task {
+            defer { isRetryingUnsyncedTrips = false }
+            for id in unsyncedTripIDs {
+                // Gone locally (deleted, or another account signed in): nothing to push.
+                guard let trip = trips.first(where: { $0.id == id }) else {
+                    unsyncedTripIDs.remove(id)
+                    continue
+                }
+                do {
+                    try await supabase.pushTrip(trip)
+                    markTripSynced(id)
+                } catch {
+                    return
+                }
             }
         }
     }

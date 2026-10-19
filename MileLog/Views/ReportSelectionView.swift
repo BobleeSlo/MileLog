@@ -10,6 +10,11 @@ import SwiftUI
 ///   • `generate`: closure that produces the PDF from a chosen sub-array.
 struct ReportSelectionView: View {
     let title: String
+    /// Shown above the trips, e.g. the vehicle — the inline navigation
+    /// title has no room for it ("Firmen VW Pas…").
+    var subtitle: String? = nil
+    /// Shown above the trips when the PDF will be missing something.
+    var warning: LocalizedStringKey? = nil
     let candidateTrips: [Trip]
     let formatRow: (Trip) -> AnyView
     let generate: ([Trip]) -> PDFReporter.Result?
@@ -30,12 +35,16 @@ struct ReportSelectionView: View {
 
     init(
         title: String,
+        subtitle: String? = nil,
+        warning: LocalizedStringKey? = nil,
         candidateTrips: [Trip],
         defaultSelected: [Trip]? = nil,
         formatRow: @escaping (Trip) -> AnyView,
         generate: @escaping ([Trip]) -> PDFReporter.Result?
     ) {
         self.title = title
+        self.subtitle = subtitle
+        self.warning = warning
         self.candidateTrips = candidateTrips
         self.formatRow = formatRow
         self.generate = generate
@@ -47,11 +56,23 @@ struct ReportSelectionView: View {
     }
 
     private var totalKm: Double {
-        selectedTrips.reduce(0) { $0 + $1.distanceKm }
+        selectedTrips.reduce(0) { $0 + $1.distanceKm.roundedToTenthKm }
     }
 
     var body: some View {
         List {
+            if subtitle != nil || warning != nil {
+                Section {
+                    if let subtitle {
+                        Text(verbatim: subtitle).font(.headline)
+                    }
+                    if let warning {
+                        Label(warning, systemImage: "exclamationmark.triangle.fill")
+                            .font(.footnote)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
             if candidateTrips.isEmpty {
                 Section {
                     Text("No trips for this period.")
@@ -80,7 +101,7 @@ struct ReportSelectionView: View {
                     HStack {
                         Text("\(selected.count) of \(candidateTrips.count) selected")
                         Spacer()
-                        Text(String(format: "%.1f km", totalKm))
+                        Text(Format.km(totalKm))
                             .font(.caption.monospacedDigit())
                     }
                 }
@@ -90,7 +111,7 @@ struct ReportSelectionView: View {
                 Section {
                     ShareLink(item: result.url) {
                         Label(
-                            "Share PDF · \(result.tripCount) trips · \(String(format: "%.0f", result.headlineKm)) km",
+                            "Share PDF · \(result.tripCount) trips · \(Format.km(result.headlineKm))",
                             systemImage: "square.and.arrow.up"
                         )
                         .frame(maxWidth: .infinity)

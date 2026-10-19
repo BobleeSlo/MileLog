@@ -46,6 +46,12 @@ struct VehicleDTO: Codable {
     }
 }
 
+/// Body of an UPDATE that repoints child rows (GPS points, receipts) at a
+/// different trip — used when two trip fragments are merged.
+struct TripIDPatchDTO: Codable {
+    var trip_id: UUID
+}
+
 struct TripDTO: Codable {
     var id: UUID
     var user_id: UUID

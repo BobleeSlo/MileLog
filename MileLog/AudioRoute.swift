@@ -31,6 +31,23 @@ enum AudioRoute {
         return nil
     }
 
+    /// True when two port UIDs belong to the same physical device. iOS gives
+    /// one car a different UID per Bluetooth profile — `<address>-tacl` for
+    /// music (A2DP) and `<address>-tsco` for calls (HFP) — so comparing the
+    /// raw strings missed the car whenever it came up on the other profile.
+    static func sameDevice(_ a: String, _ b: String) -> Bool {
+        guard !a.isEmpty, !b.isEmpty else { return false }
+        return deviceAddress(a) == deviceAddress(b)
+    }
+
+    /// The UID without its profile suffix.
+    static func deviceAddress(_ uid: String) -> String {
+        for suffix in ["-tacl", "-tsco"] where uid.hasSuffix(suffix) {
+            return String(uid.dropLast(suffix.count))
+        }
+        return uid
+    }
+
     /// True if a previously-paired car is *still connected*, even when it is
     /// not the active audio OUTPUT at this instant. CarPlay / Bluetooth audio
     /// frequently stop being the current output during quiet stretches (no
@@ -42,7 +59,7 @@ enum AudioRoute {
         let session = AVAudioSession.sharedInstance()
 
         func matches(portUID: String, portName: String) -> Bool {
-            if let uid, !uid.isEmpty, portUID == uid { return true }
+            if let uid, sameDevice(portUID, uid) { return true }
             if let name, !name.isEmpty, portName == name { return true }
             return false
         }

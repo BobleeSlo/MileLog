@@ -13,6 +13,7 @@ struct TripsListView: View {
     /// Set once the syncing state has been on screen long enough that a
     /// bare spinner stops being reassuring — see `syncingState`.
     @State private var syncIsSlow = false
+    @State private var showsMergeTrips = false
 
     var body: some View {
         NavigationStack {
@@ -36,6 +37,27 @@ struct TripsListView: View {
             }
             .navigationTitle("Trips")
             .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                // Always there, so the merge tool can be found before the app
+                // has detected a split; the count shows when there is one.
+                let splitCount = store.mergeCandidates.count
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showsMergeTrips = true
+                    } label: {
+                        if splitCount > 0 {
+                            Label("\(splitCount) split", systemImage: "arrow.triangle.merge")
+                                .labelStyle(.titleAndIcon)
+                        } else {
+                            Label("Merge split trips", systemImage: "arrow.triangle.merge")
+                                .labelStyle(.iconOnly)
+                        }
+                    }
+                }
+            }
+            .sheet(isPresented: $showsMergeTrips) {
+                MergeTripsView()
+            }
         }
     }
 
@@ -79,13 +101,12 @@ struct TripsListView: View {
         // on another device, short of force-quitting (round-5 UX review
         // finding).
         .refreshable { await store.retrySync() }
-        .confirmationDialog(
+        .alert(
             "Delete this trip?",
             isPresented: Binding(
                 get: { deleteCandidate != nil },
                 set: { if !$0 { deleteCandidate = nil } }
-            ),
-            titleVisibility: .visible
+            )
         ) {
             Button("Delete", role: .destructive) {
                 // Re-fetch the LIVE trip by id rather than trusting the
@@ -222,6 +243,7 @@ struct TripsListView: View {
 // MARK: - Trip card row -----------------------------------------------------
 
 struct TripCard: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let trip: Trip
     @EnvironmentObject var store: Store
 
@@ -234,16 +256,23 @@ struct TripCard: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 // Title row: customer (or fallback to type) + lock badge
-                HStack(spacing: 6) {
-                    Text(titleText)
-                        .font(.headline)
-                        .lineLimit(1)
-                    if trip.isLocked {
-                        Image(systemName: "lock.fill")
-                            .font(.caption2)
-                            .foregroundColor(.orange)
+                // Badge under the title at accessibility sizes, where it took
+                // the row's width and cut the customer to "Acm…".
+                let titleLayout = dynamicTypeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+                    : AnyLayout(HStackLayout(spacing: 6))
+                titleLayout {
+                    HStack(spacing: 6) {
+                        Text(titleText)
+                            .font(.headline)
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+                        if trip.isLocked {
+                            Image(systemName: "lock.fill")
+                                .font(.caption2)
+                                .foregroundColor(.orange)
+                        }
                     }
-                    Spacer(minLength: 4)
+                    if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 4) }
                     TripTypeChip(type: trip.type, compact: true)
                 }
 
@@ -251,27 +280,31 @@ struct TripCard: View {
                 if !trip.startAddress.isEmpty || !trip.endAddress.isEmpty {
                     HStack(spacing: 4) {
                         Text(trip.startAddress.isEmpty ? "—" : trip.startAddress)
-                            .lineLimit(1)
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
                             .truncationMode(.tail)
                         Image(systemName: "arrow.right")
                             .font(.caption2.weight(.semibold))
                             .foregroundColor(.secondary)
                         Text(trip.endAddress.isEmpty ? "—" : trip.endAddress)
-                            .lineLimit(1)
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
                             .truncationMode(.tail)
                     }
                     .font(.caption)
                     .foregroundColor(.secondary)
                 }
 
-                // Meta row: date · vehicle · km
-                HStack(spacing: 6) {
+                // Meta row: date · vehicle · km — stacked at accessibility
+                // text sizes, where one line cut the car to "Sko…".
+                let metaLayout = dynamicTypeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
+                    : AnyLayout(HStackLayout(spacing: 6))
+                metaLayout {
                     Text(trip.startedAt, format: .dateTime.day().month().year())
-                    Text("·")
+                    if !dynamicTypeSize.isAccessibilitySize { Text("·") }
                     Text(store.vehicleName(trip.vehicleID))
-                        .lineLimit(1)
-                    Spacer()
-                    Text(String(format: "%.1f km", trip.distanceKm))
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                    if !dynamicTypeSize.isAccessibilitySize { Spacer() }
+                    Text(Format.km(trip.distanceKm))
                         .font(.subheadline.weight(.semibold).monospacedDigit())
                         .foregroundColor(.primary)
                 }
@@ -304,7 +337,7 @@ struct MonthSectionHeader: View {
                 .font(.headline)
                 .foregroundColor(.primary)
             Spacer()
-            Text(section.summary)
+            Text("\(Format.km(section.businessKm)) business")
                 .font(.caption.weight(.semibold))
                 .foregroundColor(.white)
                 .padding(.horizontal, 10)
