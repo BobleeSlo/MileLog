@@ -116,6 +116,39 @@ final class Store: ObservableObject {
         set { UserDefaults.standard.set(newValue?.uuidString, forKey: "MileLog.preferredVehicleID") }
     }
 
+    /// After a lapse to Free with two or more active vehicles, the one vehicle
+    /// that keeps recording (KTD11). Nil until the user chooses; the most
+    /// recently used vehicle records until then.
+    @Published var recordingVehicleID: UUID? = UserDefaults.standard.string(forKey: "MileLog.recordingVehicleID").flatMap(UUID.init(uuidString:)) {
+        didSet {
+            UserDefaults.standard.set(recordingVehicleID?.uuidString, forKey: "MileLog.recordingVehicleID")
+            if let recordingVehicleID { preferredVehicleID = recordingVehicleID }
+        }
+    }
+
+    /// The only vehicle that may record, or nil when there is no restriction
+    /// (Paid, or at most one active vehicle).
+    func recordingVehicle(isPaid: Bool) -> Vehicle? {
+        Self.recordingVehicle(vehicles: activeVehicles, trips: trips, chosenID: recordingVehicleID, isPaid: isPaid)
+    }
+
+    /// True while a Free account with several active vehicles hasn't chosen one.
+    func needsRecordingVehicleChoice(isPaid: Bool) -> Bool {
+        guard !isPaid, activeVehicles.count > 1 else { return false }
+        return !activeVehicles.contains { $0.id == recordingVehicleID }
+    }
+
+    /// The chosen vehicle while it is active, else the one driven most recently.
+    nonisolated static func recordingVehicle(vehicles active: [Vehicle], trips: [Trip], chosenID: UUID?, isPaid: Bool) -> Vehicle? {
+        guard !isPaid, active.count > 1 else { return nil }
+        if let chosen = active.first(where: { $0.id == chosenID }) { return chosen }
+        let ids = Set(active.map(\.id))
+        if let latest = trips.filter({ ids.contains($0.vehicleID) }).max(by: { $0.startedAt < $1.startedAt }) {
+            return active.first { $0.id == latest.vehicleID }
+        }
+        return active.first
+    }
+
     /// Read-only access for collaborators (TripDetector pushes GPS points + receipts).
     var supabaseService: SupabaseService? { supabase }
 
@@ -892,6 +925,7 @@ final class Store: ObservableObject {
             vehicles = []
             trips = []
             settings = UserSettings()
+            recordingVehicleID = nil
             detector?.disable()
             // Purely local/on-device, but records raw GPS coordinates and
             // driving history for whichever account was signed in when

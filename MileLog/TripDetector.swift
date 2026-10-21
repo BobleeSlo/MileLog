@@ -243,6 +243,8 @@ final class TripDetector: NSObject, ObservableObject {
     /// never refuse a trip, so an unwired detector behaves as before.
     var planIsPaid: () -> Bool = { true }
     var allowanceLimit: () -> Int = { Allowance.builtInLimit }
+    /// The only vehicle that may record after a lapse to Free (KTD11); nil = any.
+    var recordingVehicle: () -> Vehicle? = { nil }
     /// Month for which a refused start was last logged, so a paused month logs once per launch.
     private var loggedAllowanceRefusalMonth: DateComponents?
 
@@ -807,6 +809,16 @@ final class TripDetector: NSObject, ObservableObject {
             return
         }
 
+        // Free plan after a lapse: a drive in a car other than the recording
+        // vehicle is not recorded at all (KTD11).
+        if let only = recordingVehicle(), vehicle.id != only.id {
+            log.log("Drive in \(vehicle.name) not recorded: on the Free plan only \(only.name) records. Change the recording vehicle in Vehicles.",
+                    level: .warning)
+            motion.stop()
+            manager.stopUpdatingLocation()
+            return
+        }
+
         // Free plan: refuse a NEW automatic trip once the month's allowance is used.
         // Only here, after the merge check — continuing a trip (resumeTrip) never
         // consumes a slot — and without disable(), so monitoring carries on and
@@ -1276,6 +1288,9 @@ final class TripDetector: NSObject, ObservableObject {
     /// Skips archived vehicles — an archived vehicle should never be silently
     /// reused as the fallback for a brand-new trip.
     private func fallbackVehicle() -> Vehicle? {
+        // Free after a lapse: a drive with no Bluetooth match is filed under
+        // the recording vehicle.
+        if let only = recordingVehicle() { return only }
         // The car picked on the Record screen first: the screen showed one car
         // while an auto trip was filed under another (field test, 19 Oct).
         if let id = store.preferredVehicleID, let v = store.vehicle(id), v.isActive {

@@ -139,8 +139,8 @@ struct RecordTripView: View {
                 location.requestPermission()
                 if selectedVehicleID == nil {
                     let preferred = store.preferredVehicleID
-                    selectedVehicleID = store.activeVehicles.first(where: { $0.id == preferred })?.id
-                        ?? store.activeVehicles.first?.id
+                    selectedVehicleID = recordableVehicles.first(where: { $0.id == preferred })?.id
+                        ?? recordableVehicles.first?.id
                 }
             }
             // `onAppear` doesn't re-fire when a vehicle is added from the
@@ -163,6 +163,10 @@ struct RecordTripView: View {
                 if selectedVehicleID == nil || !vehicles.contains(where: { $0.id == selectedVehicleID }) {
                     selectedVehicleID = vehicles.first?.id
                 }
+            }
+            .onChange(of: recordableVehicles.map(\.id)) { _, ids in
+                guard !location.isTracking, let id = selectedVehicleID, !ids.contains(id) else { return }
+                selectedVehicleID = ids.first
             }
             .sheet(item: $tripToClassify) { trip in
                 ClassifyTripView(trip: trip)
@@ -286,9 +290,15 @@ struct RecordTripView: View {
         }
     }
 
+    /// Vehicles the Record screen may record with: only the recording vehicle
+    /// after a lapse to Free (KTD11), otherwise every active one.
+    private var recordableVehicles: [Vehicle] {
+        store.recordingVehicle(isPaid: subscriptions.plan.isPaid).map { [$0] } ?? store.activeVehicles
+    }
+
     private var vehicleSelector: some View {
         Menu {
-            ForEach(store.activeVehicles) { vehicle in
+            ForEach(recordableVehicles) { vehicle in
                 Button {
                     selectedVehicleID = vehicle.id
                     store.preferredVehicleID = vehicle.id

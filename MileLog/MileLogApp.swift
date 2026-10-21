@@ -45,6 +45,9 @@ struct MileLogApp: App {
         let appConfig = AppConfig()
         detector.planIsPaid = { [weak subscriptions] in subscriptions?.plan.isPaid ?? true }
         detector.allowanceLimit = { [weak appConfig] in appConfig?.freeAutoTripsPerMonth ?? Allowance.builtInLimit }
+        detector.recordingVehicle = { [weak store, weak subscriptions] in
+            store?.recordingVehicle(isPaid: subscriptions?.plan.isPaid ?? true)
+        }
 
         _store = StateObject(wrappedValue: store)
         _location = StateObject(wrappedValue: location)

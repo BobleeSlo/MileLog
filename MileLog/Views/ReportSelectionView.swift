@@ -32,6 +32,8 @@ struct ReportSelectionView: View {
     /// since `generate`'s closures can call back into main-actor-isolated
     /// Store lookups.
     @State private var isGenerating = false
+    @EnvironmentObject var subscriptions: SubscriptionStore
+    @State private var showingPaywall = false
 
     init(
         title: String,
@@ -133,12 +135,18 @@ struct ReportSelectionView: View {
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showingPaywall) { PaywallView() }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 if !candidateTrips.isEmpty { quickFilterMenu }
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button {
+                    // PDF reports are Paid; CSV export stays free (R3, AE4).
+                    guard subscriptions.plan.allows(.reports) else {
+                        showingPaywall = true
+                        return
+                    }
                     Task {
                         isGenerating = true
                         await Task.yield()   // let the spinner actually render first

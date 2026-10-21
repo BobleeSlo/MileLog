@@ -307,4 +307,43 @@ final class MileLogTests: XCTestCase {
         XCTAssertEqual(AppConfig(defaults: defaults).freeAutoTripsPerMonth, 10)
     }
 
+
+    // MARK: - Paid gates and the recording vehicle
+
+    func testFreeGatesPaidFeatures() {
+        // AE4: reports and receipts are gated; CSV export has no gate at all.
+        XCTAssertFalse(PlanStatus.free.allows(.reports))
+        XCTAssertFalse(PlanStatus.free.allows(.receipts))
+        XCTAssertFalse(PlanStatus.freeOtherAccount.allows(.monthEndCheck))
+        XCTAssertTrue(PlanStatus.paid(until: nil).allows(.reports))
+        XCTAssertTrue(PlanStatus.paid(until: nil).allows(.extraVehicle, activeVehicleCount: 3))
+    }
+
+    func testFreeAccountsKeepOneActiveVehicle() {
+        XCTAssertTrue(PlanStatus.free.allows(.extraVehicle, activeVehicleCount: 0))  // e.g. one archived
+        XCTAssertFalse(PlanStatus.free.allows(.extraVehicle, activeVehicleCount: 1))
+    }
+
+    private func vehicle(_ name: String) -> Vehicle { Vehicle(name: name, licensePlate: "", type: .own) }
+
+    private func drive(_ v: Vehicle, daysAgo: Double) -> Trip {
+        Trip(vehicleID: v.id, type: .business, purpose: "", customerName: "",
+             startedAt: Date().addingTimeInterval(-daysAgo * 86_400), endedAt: Date(),
+             startAddress: "", endAddress: "", distanceKm: 5, notes: "", isLocked: false)
+    }
+
+    func testRecordingVehicleDefaultsToTheLastDriven() {
+        let golf = vehicle("Golf"), octavia = vehicle("Octavia")
+        let trips = [drive(golf, daysAgo: 3), drive(octavia, daysAgo: 1)]
+        XCTAssertEqual(Store.recordingVehicle(vehicles: [golf, octavia], trips: trips, chosenID: nil, isPaid: false)?.id, octavia.id)
+        // A choice wins; an archived (missing) choice falls back to the default.
+        XCTAssertEqual(Store.recordingVehicle(vehicles: [golf, octavia], trips: trips, chosenID: golf.id, isPaid: false)?.id, golf.id)
+        XCTAssertEqual(Store.recordingVehicle(vehicles: [golf, octavia], trips: trips, chosenID: UUID(), isPaid: false)?.id, octavia.id)
+    }
+
+    func testNoRecordingRestrictionWhenPaidOrSingleVehicle() {
+        let golf = vehicle("Golf"), octavia = vehicle("Octavia")
+        XCTAssertNil(Store.recordingVehicle(vehicles: [golf, octavia], trips: [], chosenID: nil, isPaid: true))
+        XCTAssertNil(Store.recordingVehicle(vehicles: [golf], trips: [], chosenID: nil, isPaid: false))
+    }
 }

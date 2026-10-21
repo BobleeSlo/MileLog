@@ -2,6 +2,11 @@ import SwiftUI
 
 struct RootTabView: View {
     @EnvironmentObject var detector: TripDetector
+    @EnvironmentObject var store: Store
+    @EnvironmentObject var subscriptions: SubscriptionStore
+    /// Asked once per app open while the choice is pending; Vehicles offers it too.
+    @State private var showingRecordingChoice = false
+    @State private var askedRecordingChoice = false
     /// Scene storage, so the tab survives the rebuild a language change
     /// triggers (the user stays in Settings instead of landing on Record).
     @SceneStorage("selectedTab") private var selectedTab = 0
@@ -25,6 +30,12 @@ struct RootTabView: View {
                 .tag(3)
         }
         .tint(Theme.accent)
+        .sheet(isPresented: $showingRecordingChoice) { RecordingVehicleChoiceView() }
+        .task(id: subscriptions.plan) {
+            guard !askedRecordingChoice, store.needsRecordingVehicleChoice(isPaid: subscriptions.plan.isPaid) else { return }
+            askedRecordingChoice = true
+            showingRecordingChoice = true
+        }
         .alert("Before auto-detect starts", isPresented: $detector.showsPermissionPrimer) {
             Button("Continue") { detector.confirmPermissionPrimer() }
             Button("Not now", role: .cancel) { }
