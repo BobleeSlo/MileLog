@@ -34,6 +34,7 @@ struct ReportSelectionView: View {
     @State private var isGenerating = false
     @EnvironmentObject var subscriptions: SubscriptionStore
     @EnvironmentObject var store: Store
+    @EnvironmentObject var usage: Usage
     @State private var showingPaywall = false
     @State private var confirmingGenerateAnyway = false
 
@@ -52,6 +53,7 @@ struct ReportSelectionView: View {
             await Task.yield()   // let the spinner actually render first
             result = generate(selectedTrips)
             generationFailed = (result == nil)
+            if result != nil { usage.record(.reportGenerations) }
             isGenerating = false
         }
     }

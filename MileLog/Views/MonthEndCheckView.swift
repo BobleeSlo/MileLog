@@ -4,6 +4,7 @@ import SwiftUI
 /// opens the trip or the merge screen; locked trips are shown apart, read-only.
 struct MonthEndCheckView: View {
     @EnvironmentObject var store: Store
+    @EnvironmentObject var usage: Usage
     @State var month: Date
     @State private var showsMergeTrips = false
 
@@ -98,6 +99,7 @@ struct MonthEndCheckView: View {
                 }
             }
         }
+        .onAppear { usage.record(.monthEndCheckOpens) }
         .navigationTitle("Month-end check")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showsMergeTrips) { MergeTripsView() }

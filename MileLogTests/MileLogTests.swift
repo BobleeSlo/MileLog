@@ -436,4 +436,40 @@ final class MileLogTests: XCTestCase {
         let c = ljubljana.dateComponents([.month, .day, .hour], from: fire)
         XCTAssertEqual([c.month, c.day, c.hour], [2, 28, 18])
     }
+
+    // MARK: - Usage figures
+
+    func testNoUsageWithoutConsent() {
+        let defaults = UserDefaults(suiteName: "MileLogTests.usage")!
+        defaults.removePersistentDomain(forName: "MileLogTests.usage")
+        let usage = MainActor.assumeIsolated { Usage(defaults: defaults) }
+        MainActor.assumeIsolated {
+            usage.consent = false
+            usage.record(.reportGenerations, now: date("2026-10-10T08:00:00"))
+        }
+        XCTAssertEqual(defaults.integer(forKey: Usage.countKey(.reportGenerations, month: "2026-10")), 0)
+        MainActor.assumeIsolated {
+            usage.consent = true
+            usage.record(.reportGenerations, now: date("2026-10-10T08:00:00"))
+        }
+        XCTAssertEqual(defaults.integer(forKey: Usage.countKey(.reportGenerations, month: "2026-10")), 1)
+    }
+
+    func testOctoberIsSentAsABucketAfterItEnds() {
+        let october = trips(13, on: "2026-10-12T08:00:00")
+        let sent = Usage.submissions(month: date("2026-10-15T12:00:00"), now: date("2026-11-03T09:00:00"),
+                                     trips: october, counts: [.reportGenerations: 2], calendar: ljubljana)
+        XCTAssertEqual(sent.first { $0.metric == .autoTrips }?.bucket, "11-15")
+        XCTAssertEqual(sent.first { $0.metric == .reportGenerations }?.bucket, "1-5")
+        XCTAssertEqual(sent.count, Usage.Metric.allCases.count)
+    }
+
+    func testNothingIsSentForTheRunningMonth() {
+        XCTAssertTrue(Usage.submissions(month: date("2026-10-15T12:00:00"), now: date("2026-10-30T09:00:00"),
+                                        trips: [], counts: [:], calendar: ljubljana).isEmpty)
+    }
+
+    func testBuckets() {
+        XCTAssertEqual([0, 1, 5, 6, 15, 16, 26, 51, 101].map(Usage.bucket), ["0", "1-5", "1-5", "6-10", "11-15", "16-25", "26-50", "51-100", "101+"])
+    }
 }

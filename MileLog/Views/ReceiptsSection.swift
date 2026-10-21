@@ -11,6 +11,7 @@ struct ReceiptsSection: View {
 
     @EnvironmentObject var supabase: SupabaseService
     @EnvironmentObject var subscriptions: SubscriptionStore
+    @EnvironmentObject var usage: Usage
     @State private var showingPaywall = false
 
     @State private var photoItem: PhotosPickerItem?
@@ -240,6 +241,7 @@ struct ReceiptsSection: View {
             saved.photoPath = path
             try await supabase.pushReceipt(saved, tripID: tripID)
             receipts.append(saved)
+            usage.record(.receiptSaves)
             newAmount = ""
             scanHint = nil
             pendingImage = nil

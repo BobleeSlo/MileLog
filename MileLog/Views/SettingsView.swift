@@ -11,6 +11,7 @@ struct SettingsView: View {
     @EnvironmentObject var appLock: AppLock
     @EnvironmentObject var language: AppLanguage
     @EnvironmentObject var subscriptions: SubscriptionStore
+    @EnvironmentObject var usage: Usage
     @State private var showingPaywall = false
     @State private var showingManageSubscription = false
     @State private var isRestoring = false
@@ -429,6 +430,19 @@ struct SettingsView: View {
                         Link("Terms of use", destination: AppLinks.termsOfUse)
                     }
                     .font(.caption)
+                }
+
+                // MARK: Privacy
+                Section {
+                    Toggle("Share anonymous usage", isOn: Binding(
+                        get: { usage.consent == true },
+                        set: { usage.consent = $0 }
+                    ))
+                } header: {
+                    SectionHeaderLabel(title: "Privacy", systemImage: "hand.raised")
+                } footer: {
+                    Text("Once a month MileLog sends rough counts — how many automatic trips, reports, receipts and month-end checks, in ranges such as 11–15 — with no trips, places or device details. It helps decide the Free plan's limits. Nothing depends on it.")
+                        .font(.caption)
                 }
 
                 // MARK: Account

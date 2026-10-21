@@ -398,6 +398,13 @@ final class SupabaseService: ObservableObject {
             .execute()
     }
 
+    // MARK: - Usage figures
+
+    /// Adds one to an anonymous monthly counter through the `record_usage` function.
+    func recordUsage(month: String, metric: String, bucket: String) async throws {
+        try await client.rpc("record_usage", params: ["p_month": month, "p_metric": metric, "p_bucket": bucket]).execute()
+    }
+
     // MARK: - Plans
 
     /// The account's entitlement rows (RLS returns only its own).

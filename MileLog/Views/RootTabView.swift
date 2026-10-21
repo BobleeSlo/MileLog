@@ -8,6 +8,8 @@ struct RootTabView: View {
     @State private var showingRecordingChoice = false
     @State private var askedRecordingChoice = false
     @EnvironmentObject var notifications: NotificationManager
+    @EnvironmentObject var usage: Usage
+    @State private var askingUsageConsent = false
     @State private var showingPaywall = false
     @State private var monthEndCheckMonth: Date?
     @State private var routedTrip: Trip?
@@ -51,6 +53,16 @@ struct RootTabView: View {
                         ToolbarItem(placement: .cancellationAction) { Button("Close") { routedTrip = nil } }
                     }
             }
+        }
+        // The one-time usage question (KTD13); the answer can change in Settings.
+        .task {
+            if usage.consent == nil, !store.trips.isEmpty { askingUsageConsent = true }
+        }
+        .alert("Share anonymous usage?", isPresented: $askingUsageConsent) {
+            Button("Share") { usage.consent = true }
+            Button("Don't share", role: .cancel) { usage.consent = false }
+        } message: {
+            Text("Once a month MileLog would send rough counts — such as 11–15 automatic trips — with no trips, places or device details. You can change this in Settings.")
         }
         // Notification taps (KTD15).
         .onChange(of: notifications.pendingRoute) { _, route in
