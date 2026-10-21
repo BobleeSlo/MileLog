@@ -345,6 +345,15 @@ final class SupabaseService: ObservableObject {
             .execute().value
     }
 
+    /// The Free plan's monthly allowance from `app_config` (readable without signing in).
+    func pullFreeAutoTripLimit() async throws -> Int? {
+        struct Row: Decodable { let value: Int }
+        let rows: [Row] = try await client.from("app_config")
+            .select("value").eq("key", value: "free_auto_trips_per_month")
+            .execute().value
+        return rows.first?.value
+    }
+
     /// Sends a signed StoreKit transaction to the `verify-purchase` Edge Function.
     func verifyPurchase(signedTransaction: String) async throws {
         try await client.functions.invoke(

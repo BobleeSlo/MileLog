@@ -26,6 +26,12 @@ final class SubscriptionStore: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         cache = PlanCache(defaults: defaults)
+        // A background relaunch for a drive can reach the trip detector before
+        // any view has resolved the account: start from the last account's
+        // cached plan so a Paid user is never refused (KTD5's offline rule).
+        if let last = cache.lastUserID {
+            plan = PlanResolver.resolve(server: nil, local: [], cache: cache.load(for: last), userID: last, now: Date())
+        }
     }
 
     /// Starts listening for transactions; call once at launch.
@@ -42,8 +48,9 @@ final class SubscriptionStore: ObservableObject {
 
     /// Called whenever the signed-in account changes (nil on sign-out).
     func accountChanged(to newUserID: UUID?) async {
-        if let old = userID, old != newUserID { cache.clear(for: old) }
+        if let old = userID ?? cache.lastUserID, old != newUserID { cache.clear(for: old) }
         userID = newUserID
+        cache.lastUserID = newUserID
         guard newUserID != nil else {
             plan = .free
             return
@@ -161,6 +168,12 @@ final class SubscriptionStore: ObservableObject {
 /// Per-account plan cache in UserDefaults.
 struct PlanCache {
     let defaults: UserDefaults
+
+    /// The account whose plan was last resolved on this device.
+    var lastUserID: UUID? {
+        get { defaults.string(forKey: "MileLog.planCache.lastUser").flatMap(UUID.init(uuidString:)) }
+        nonmutating set { defaults.set(newValue?.uuidString, forKey: "MileLog.planCache.lastUser") }
+    }
 
     private func key(_ userID: UUID) -> String { "MileLog.planCache.\(userID.uuidString.lowercased())" }
 

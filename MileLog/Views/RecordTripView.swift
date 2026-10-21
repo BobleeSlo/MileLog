@@ -6,6 +6,9 @@ struct RecordTripView: View {
     @EnvironmentObject var store: Store
     @EnvironmentObject var location: LocationManager
     @EnvironmentObject var detector: TripDetector
+    @EnvironmentObject var subscriptions: SubscriptionStore
+    @EnvironmentObject var appConfig: AppConfig
+    @State private var showingPaywall = false
 
     @State private var selectedVehicleID: UUID?
     @State private var tripToClassify: Trip?
@@ -42,6 +45,36 @@ struct RecordTripView: View {
 
     private var isLive: Bool { location.isTracking || autoActive }
 
+    private var allowance: AllowanceState {
+        Allowance.state(trips: store.trips, now: Date(), limit: appConfig.freeAutoTripsPerMonth)
+    }
+
+    /// Free plan: automatic trips left this month, or the paused state (R5, F1).
+    private var allowanceCard: some View {
+        let state = allowance
+        return VStack(alignment: .leading, spacing: 10) {
+            if state.isPaused {
+                Label("Automatic recording paused", systemImage: "pause.circle.fill")
+                    .font(.headline)
+                Text("All \(state.limit) automatic trips of the Free plan are used this month. Start trips manually, or subscribe. Automatic recording resumes on the 1st.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                Label("\(state.remaining) of \(state.limit) automatic trips left this month", systemImage: "car.badge.gearshape")
+                    .font(.subheadline.weight(.semibold))
+            }
+            Button {
+                showingPaywall = true
+            } label: {
+                Text("Subscribe").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView(showsIndicators: false) {
@@ -53,6 +86,10 @@ struct RecordTripView: View {
 
                     heroBadge
                         .padding(.vertical, 8)
+
+                    if !subscriptions.plan.isPaid && store.settings.autoDetectEnabled {
+                        allowanceCard
+                    }
 
                     if !autoActive { primaryButton }
                     if showingTooShortNotice {
@@ -95,6 +132,7 @@ struct RecordTripView: View {
             }
             .scrollBounceBehavior(.basedOnSize)
             .background(backgroundWash)
+            .sheet(isPresented: $showingPaywall) { PaywallView() }
             .navigationTitle("Record")
             .navigationBarTitleDisplayMode(.inline)   // avoid large-title overlap on iOS 26
             .onAppear {

@@ -239,6 +239,13 @@ final class TripDetector: NSObject, ObservableObject {
     /// by `startMonitoring()` so a later relapse alerts again.
     private var hasWarnedNoVehicle = false
 
+    /// Plan inputs for the Free allowance, wired by the app (KTD3). The defaults
+    /// never refuse a trip, so an unwired detector behaves as before.
+    var planIsPaid: () -> Bool = { true }
+    var allowanceLimit: () -> Int = { Allowance.builtInLimit }
+    /// Month for which a refused start was last logged, so a paused month logs once per launch.
+    private var loggedAllowanceRefusalMonth: DateComponents?
+
     // Active-trip persistence throttle: JSON-encoding + rewriting the whole
     // active-trip file on every single GPS callback (which can arrive every
     // few metres on a long drive) is real I/O cost that risks delaying the
@@ -800,6 +807,25 @@ final class TripDetector: NSObject, ObservableObject {
             return
         }
 
+        // Free plan: refuse a NEW automatic trip once the month's allowance is used.
+        // Only here, after the merge check — continuing a trip (resumeTrip) never
+        // consumes a slot — and without disable(), so monitoring carries on and
+        // recording resumes by itself on the 1st (KTD3).
+        if !planIsPaid() {
+            let allowance = Allowance.state(trips: store.trips, now: startedAt, limit: allowanceLimit())
+            if allowance.isPaused {
+                let month = Calendar.current.dateComponents([.year, .month], from: startedAt)
+                if loggedAllowanceRefusalMonth != month {
+                    loggedAllowanceRefusalMonth = month
+                    log.log("Automatic trip not recorded: all \(allowance.limit) automatic trips of the Free plan are used this month. Manual recording still works; automatic recording resumes on the 1st.",
+                            level: .warning)
+                }
+                motion.stop()
+                manager.stopUpdatingLocation()
+                return
+            }
+        }
+
         let firstPoint = RecordedPoint(
             recordedAt: location.timestamp,
             lat: location.coordinate.latitude,
@@ -1162,6 +1188,18 @@ final class TripDetector: NSObject, ObservableObject {
 
         resumeTrip(lastTrip, at: location, vehicle: vehicle, device: device)
         return true
+    }
+
+    /// Heads-up at the limit minus 3 and minus 1, and the pause notice at the
+    /// limit — each once per month, for Free accounts only (KTD2).
+    private func sendAllowanceNoticeIfDue(at date: Date) {
+        guard !planIsPaid(), let notifications else { return }
+        let allowance = Allowance.state(trips: store.trips, now: date, limit: allowanceLimit())
+        guard let notice = Allowance.notice(for: allowance) else { return }
+        let key = Allowance.noticeKey(notice, now: date)
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        Task { await notifications.sendAllowanceNotice(notice, state: allowance) }
     }
 
     /// Pulls a saved trip back out of `store.trips` and resurrects it as the
@@ -1623,6 +1661,7 @@ final class TripDetector: NSObject, ObservableObject {
         store.addTrip(trip)
         log.log(String(format: "Trip ended (%@): %.1f km → %@",
                        reason, state.distanceKm, classified.type.label), level: .info)
+        if trip.source == .auto { sendAllowanceNoticeIfDue(at: trip.startedAt) }
 
         // Notify the user so they can quick-classify.
         if let notifications {

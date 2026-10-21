@@ -11,6 +11,7 @@ struct MileLogApp: App {
     @StateObject private var appLock = AppLock()
     @StateObject private var language = AppLanguage()
     @StateObject private var subscriptions: SubscriptionStore
+    @StateObject private var appConfig: AppConfig
 
     init() {
         // Build the dependency graph manually so the detector can hold non-owning
@@ -41,6 +42,9 @@ struct MileLogApp: App {
         supabase.manualLocation = location
         let subscriptions = SubscriptionStore()
         subscriptions.start(supabase: supabase)
+        let appConfig = AppConfig()
+        detector.planIsPaid = { [weak subscriptions] in subscriptions?.plan.isPaid ?? true }
+        detector.allowanceLimit = { [weak appConfig] in appConfig?.freeAutoTripsPerMonth ?? Allowance.builtInLimit }
 
         _store = StateObject(wrappedValue: store)
         _location = StateObject(wrappedValue: location)
@@ -49,6 +53,7 @@ struct MileLogApp: App {
         _notifications = StateObject(wrappedValue: notifications)
         _detector = StateObject(wrappedValue: detector)
         _subscriptions = StateObject(wrappedValue: subscriptions)
+        _appConfig = StateObject(wrappedValue: appConfig)
     }
 
     var body: some Scene {
@@ -63,6 +68,7 @@ struct MileLogApp: App {
                 .environmentObject(appLock)
                 .environmentObject(language)
                 .environmentObject(subscriptions)
+                .environmentObject(appConfig)
                 // Switches every SwiftUI `Text` to the chosen language at once.
                 .environment(\.locale, language.locale)
                 // Rebuilds the screens so text computed in code (model labels,
@@ -80,6 +86,7 @@ struct RootView: View {
     @EnvironmentObject var supabase: SupabaseService
     @EnvironmentObject var appLock: AppLock
     @EnvironmentObject var subscriptions: SubscriptionStore
+    @EnvironmentObject var appConfig: AppConfig
     @Environment(\.scenePhase) private var scenePhase
     /// Set when the user opens a password-reset link from their email —
     /// see `SetNewPasswordView`. Presented over everything else, because
@@ -121,6 +128,7 @@ struct RootView: View {
         // Plan follows the signed-in account; sign-out clears its cached status.
         .task(id: supabase.userID) {
             await subscriptions.accountChanged(to: supabase.userID)
+            await appConfig.refreshIfStale(via: supabase)
         }
         // Receives the password-reset link from the user's email. Without
         // this the "Forgot password?" flow was a dead end — the email was
@@ -194,7 +202,10 @@ struct RootView: View {
             if phase == .active {
                 store.applyAutomaticLocks()
                 store.retryUnsyncedTrips()
-                Task { await subscriptions.refresh() }
+                Task {
+                    await subscriptions.refresh()
+                    await appConfig.refreshIfStale(via: supabase)
+                }
             }
         }
     }

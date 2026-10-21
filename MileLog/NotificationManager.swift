@@ -119,6 +119,23 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         try? await center.add(request)
     }
 
+    /// Free plan allowance: heads-up before the limit and the pause at it.
+    func sendAllowanceNotice(_ notice: Allowance.Notice, state: AllowanceState) async {
+        let content = UNMutableNotificationContent()
+        switch notice {
+        case .threeLeft, .oneLeft:
+            content.title = String(localized: "Automatic trips running low", bundle: .app)
+            content.body = String(localized: "\(state.remaining) of \(state.limit) automatic trips left this month on the Free plan.", bundle: .app)
+        case .paused:
+            content.title = String(localized: "Automatic recording paused", bundle: .app)
+            content.body = String(localized: "You've used all \(state.limit) automatic trips this month. Record trips manually, or subscribe to keep recording automatically.", bundle: .app)
+        }
+        content.sound = .default
+        content.userInfo = ["route": "paywall"]
+        let request = UNNotificationRequest(identifier: "allowance-\(notice.rawValue)", content: content, trigger: nil)
+        try? await center.add(request)
+    }
+
     // MARK: - Handling action taps
 
     nonisolated func userNotificationCenter(

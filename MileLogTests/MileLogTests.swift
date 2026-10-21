@@ -230,4 +230,81 @@ final class MileLogTests: XCTestCase {
         let plan = store.plan
         XCTAssertEqual(plan, .free)
     }
+
+    // MARK: - Allowance
+
+    private var ljubljana: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "Europe/Ljubljana")!
+        return c
+    }
+
+    private func date(_ s: String) -> Date {
+        let f = ISO8601DateFormatter()
+        f.timeZone = TimeZone(identifier: "Europe/Ljubljana")!
+        f.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime]
+        return f.date(from: s)!
+    }
+
+    private func trips(_ count: Int, on day: String, source: TripSource = .auto, km: Double = 5) -> [Trip] {
+        (0..<count).map { _ in
+            Trip(vehicleID: UUID(), type: .business, purpose: "", customerName: "", startedAt: date(day), endedAt: date(day),
+                 startAddress: "", endAddress: "", distanceKm: km, notes: "", isLocked: false, source: source)
+        }
+    }
+
+    func testFifteenthTripIsSavedAndTheNextStartIsRefused() {
+        // AE1: 14 used → the 15th may start; once it is saved the month is paused.
+        let before = Allowance.state(trips: trips(14, on: "2026-10-20T08:00:00"), now: date("2026-10-21T08:00:00"), calendar: ljubljana, limit: 15)
+        XCTAssertFalse(before.isPaused)
+        XCTAssertEqual(before.remaining, 1)
+        let after = Allowance.state(trips: trips(15, on: "2026-10-20T08:00:00"), now: date("2026-10-21T08:00:00"), calendar: ljubljana, limit: 15)
+        XCTAssertTrue(after.isPaused)
+    }
+
+    func testNewMonthResumes() {
+        // AE2
+        let state = Allowance.state(trips: trips(15, on: "2026-10-20T08:00:00"), now: date("2026-11-01T07:00:00"), calendar: ljubljana, limit: 15)
+        XCTAssertEqual(state.used, 0)
+        XCTAssertFalse(state.isPaused)
+    }
+
+    func testManualTripsAndDiscardedDrivesDontCount() {
+        // AE3
+        let all = trips(15, on: "2026-10-20T08:00:00", source: .manual) + trips(3, on: "2026-10-20T08:00:00", km: 0.1)
+        XCTAssertEqual(Allowance.state(trips: all, now: date("2026-10-21T08:00:00"), calendar: ljubljana, limit: 15).used, 0)
+    }
+
+    func testLateEveningTripCountsForItsStartMonth() {
+        let state = Allowance.state(trips: trips(1, on: "2026-10-31T23:50:00"), now: date("2026-10-31T23:59:00"), calendar: ljubljana, limit: 15)
+        XCTAssertEqual(state.used, 1)
+        XCTAssertEqual(Allowance.state(trips: trips(1, on: "2026-10-31T23:50:00"), now: date("2026-11-01T00:10:00"), calendar: ljubljana, limit: 15).used, 0)
+    }
+
+    func testChangingTheLimit() {
+        let twelve = trips(12, on: "2026-10-20T08:00:00")
+        XCTAssertTrue(Allowance.state(trips: twelve, now: date("2026-10-21T08:00:00"), calendar: ljubljana, limit: 10).isPaused)
+        XCTAssertFalse(Allowance.state(trips: twelve, now: date("2026-10-21T08:00:00"), calendar: ljubljana, limit: 20).isPaused)
+    }
+
+    func testNoticesFollowTheLimit() {
+        XCTAssertEqual(Allowance.notice(for: AllowanceState(used: 12, limit: 15)), .threeLeft)
+        XCTAssertEqual(Allowance.notice(for: AllowanceState(used: 14, limit: 15)), .oneLeft)
+        XCTAssertEqual(Allowance.notice(for: AllowanceState(used: 15, limit: 15)), .paused)
+        XCTAssertNil(Allowance.notice(for: AllowanceState(used: 13, limit: 15)))
+        XCTAssertEqual(Allowance.notice(for: AllowanceState(used: 7, limit: 10)), .threeLeft)
+        XCTAssertEqual(Allowance.notice(for: AllowanceState(used: 9, limit: 10)), .oneLeft)
+        XCTAssertNotEqual(Allowance.noticeKey(.oneLeft, now: date("2026-10-21T08:00:00"), calendar: ljubljana),
+                          Allowance.noticeKey(.oneLeft, now: date("2026-11-21T08:00:00"), calendar: ljubljana))
+    }
+
+    @MainActor
+    func testBuiltInLimitWithoutConfig() {
+        let defaults = UserDefaults(suiteName: "MileLogTests.config")!
+        defaults.removePersistentDomain(forName: "MileLogTests.config")
+        XCTAssertEqual(AppConfig(defaults: defaults).freeAutoTripsPerMonth, 15)
+        AppConfig(defaults: defaults).apply(limit: 10, fetchedAt: Date())
+        XCTAssertEqual(AppConfig(defaults: defaults).freeAutoTripsPerMonth, 10)
+    }
+
 }
