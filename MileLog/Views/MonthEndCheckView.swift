@@ -22,10 +22,12 @@ struct MonthEndCheckView: View {
             Section {
                 HStack {
                     Button { step(-1) } label: { Image(systemName: "chevron.left") }
+                        .accessibilityLabel("Previous month")
                     Spacer()
                     Text(monthTitle).font(.headline)
                     Spacer()
                     Button { step(1) } label: { Image(systemName: "chevron.right") }
+                        .accessibilityLabel("Next month")
                         .disabled(Calendar.current.isDate(month, equalTo: Date(), toGranularity: .month))
                 }
                 .buttonStyle(.borderless)

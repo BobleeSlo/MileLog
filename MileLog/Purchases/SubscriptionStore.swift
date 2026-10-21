@@ -48,7 +48,9 @@ final class SubscriptionStore: ObservableObject {
 
     /// Called whenever the signed-in account changes (nil on sign-out).
     func accountChanged(to newUserID: UUID?) async {
-        if let old = userID ?? cache.lastUserID, old != newUserID { cache.clear(for: old) }
+        // The previous launch's account counts only when another account signs in;
+        // a sign-out clears the account signed in during this run.
+        if let old = userID ?? (newUserID != nil ? cache.lastUserID : nil), old != newUserID { cache.clear(for: old) }
         userID = newUserID
         cache.lastUserID = newUserID
         guard newUserID != nil else {
@@ -74,6 +76,8 @@ final class SubscriptionStore: ObservableObject {
             LocalEntitlement(originalTransactionID: String($0.originalID), appAccountToken: $0.appAccountToken,
                              expiresAt: $0.expirationDate, isRevoked: $0.revocationDate != nil)
         }
+        // The account may have changed during the awaits above.
+        guard self.userID == userID else { return }
         let now = Date()
         setPlan(PlanResolver.resolve(server: server, local: local, cache: cache.load(for: userID), userID: userID, now: now))
         if server != nil {

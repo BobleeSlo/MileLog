@@ -36,8 +36,14 @@ export async function apiToken(key: ApiKey, now = Date.now()): Promise<string> {
 export function appStoreStatusLookup(key: ApiKey, fetchImpl: typeof fetch = fetch): StatusLookup {
   return async (originalTransactionId, environment) => {
     const url = `${apiBaseURL(environment)}/inApps/v1/subscriptions/${encodeURIComponent(originalTransactionId)}`;
-    const res = await fetchImpl(url, { headers: { Authorization: `Bearer ${await apiToken(key)}` } });
-    if (!res.ok) return null;
+    const res = await fetchImpl(url, {
+      headers: { Authorization: `Bearer ${await apiToken(key)}` },
+      signal: AbortSignal.timeout(10_000), // a timeout surfaces as verify-purchase's 500, safe to retry
+    });
+    if (!res.ok) {
+      console.error(`App Store Server API ${res.status} for ${environment}: ${(await res.text()).slice(0, 300)}`);
+      return null;
+    }
     const body = await res.json() as { data?: { lastTransactions?: (SubscriptionStatus & { originalTransactionId: string })[] }[] };
     for (const group of body.data ?? []) {
       const match = group.lastTransactions?.find((t) => t.originalTransactionId === originalTransactionId);

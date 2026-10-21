@@ -9,6 +9,7 @@ struct RootTabView: View {
     @State private var askedRecordingChoice = false
     @EnvironmentObject var notifications: NotificationManager
     @EnvironmentObject var usage: Usage
+    @Environment(\.scenePhase) private var scenePhase
     @State private var askingUsageConsent = false
     @State private var showingPaywall = false
     @State private var monthEndCheckMonth: Date?
@@ -79,7 +80,9 @@ struct RootTabView: View {
         }
         // Month-end reminder follows the plan and the current month's open items.
         // Keyed on cheap values: the check itself runs only in the task, and only for Paid users.
-        .task(id: ReminderInputs(isPaid: subscriptions.plan.isPaid, tripsCount: store.trips.count)) {
+        .task(id: ReminderInputs(isPaid: subscriptions.plan.isPaid,
+                                 tripsRevision: subscriptions.plan.isPaid ? store.trips.hashValue : 0,
+                                 isActive: scenePhase == .active)) {
             let isPaid = subscriptions.plan.isPaid
             await notifications.scheduleMonthEndReminder(isPaid: isPaid, openItems: isPaid ? currentMonthOpenItems : 0)
         }
@@ -105,7 +108,9 @@ extension RootTabView {
 
 private struct ReminderInputs: Equatable {
     var isPaid: Bool
-    var tripsCount: Int
+    /// Changes with any edit to a trip (classification, merge, address), not only the count.
+    var tripsRevision: Int
+    var isActive: Bool
 }
 
 private struct RoutedMonth: Identifiable {

@@ -1,7 +1,7 @@
 // U3 scenarios for verify-purchase and apple-notifications, with an in-memory store.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { handleNotification, verifyPurchase, type EntitlementRow, type EntitlementStore, type SubscriptionStatus } from "./entitlements.ts";
+import { handleNotification, isPaid, verifyPurchase, type EntitlementRow, type EntitlementStore, type SubscriptionStatus } from "./entitlements.ts";
 import { apiBaseURL } from "./app-store-api.ts";
 import { makeChain, signJWS, type TestChain } from "./test-signing.ts";
 
@@ -210,4 +210,49 @@ test("a notification for another app is rejected", async () => {
 test("an oversized body is refused before parsing", async () => {
   const res = await handleNotification("x".repeat(70_000), { store: memoryStore(), config: config() });
   assert.equal(res.httpStatus, 413);
+});
+
+test("a grace period counts as Paid until the grace expiry", async () => {
+  const store = memoryStore();
+  const renewal = await signJWS(chain, { originalTransactionId: "1000", productId: MONTHLY, gracePeriodExpiresDate: NOW + 6 * DAY, signedDate: NOW, environment: "Production" });
+  const payload = {
+    notificationType: "DID_FAIL_TO_RENEW", subtype: "GRACE_PERIOD", notificationUUID: crypto.randomUUID(), signedDate: NOW,
+    data: { bundleId: "BT1.MileLog", environment: "Production", signedTransactionInfo: await signJWS(chain, tx({ expiresDate: NOW - DAY })), signedRenewalInfo: renewal },
+  };
+  await handleNotification(JSON.stringify({ signedPayload: await signJWS(chain, payload) }), { store, config: config() });
+  const row = store.rows.get("1000")!;
+  assert.equal(row.status, "grace");
+  assert.equal(row.expires_at, new Date(NOW + 6 * DAY).toISOString());
+  assert.ok(isPaid(row, new Date(NOW)));
+  assert.ok(!isPaid(row, new Date(NOW + 6 * DAY)));
+  await handleNotification(await notification("GRACE_PERIOD_EXPIRED", {}, { signedDate: NOW + 7 * DAY }), { store, config: config() });
+  assert.equal(store.rows.get("1000")!.status, "billing_retry");
+});
+
+test("an unavailable status lookup writes nothing and leaves a Paid row intact", async () => {
+  const store = memoryStore();
+  await verifyPurchase(ALICE, await signJWS(chain, tx()), { store, lookupStatus: lookup(1), config: config() });
+  const before = { ...store.rows.get("1000")! };
+  const res = await verifyPurchase(ALICE, await signJWS(chain, tx()), { store, lookupStatus: async () => null, config: config() });
+  assert.deepEqual([res.httpStatus, res.body.error], [502, "status_unavailable"]);
+  assert.deepEqual(store.rows.get("1000"), before);
+});
+
+test("a status for a different subscription is refused", async () => {
+  const store = memoryStore();
+  const wrong = async (): Promise<SubscriptionStatus> => ({ status: 1, signedTransactionInfo: await signJWS(chain, tx({ originalTransactionId: "2000" })) });
+  const res = await verifyPurchase(ALICE, await signJWS(chain, tx()), { store, lookupStatus: wrong, config: config() });
+  assert.deepEqual([res.httpStatus, res.body.error, store.writes], [502, "mismatched_status", 0]);
+});
+
+test("a missing transaction is a bad request", async () => {
+  const res = await verifyPurchase(ALICE, undefined, { store: memoryStore(), lookupStatus: lookup(1), config: config() });
+  assert.deepEqual([res.httpStatus, res.body.error], [400, "missing_transaction"]);
+});
+
+test("a notification without a transaction (e.g. TEST) is acknowledged without a write", async () => {
+  const store = memoryStore();
+  const payload = { notificationType: "TEST", notificationUUID: crypto.randomUUID(), signedDate: NOW, data: { bundleId: "BT1.MileLog", environment: "Production" } };
+  const res = await handleNotification(JSON.stringify({ signedPayload: await signJWS(chain, payload) }), { store, config: config() });
+  assert.deepEqual([res.httpStatus, res.body.result, store.writes], [200, "ignored", 0]);
 });

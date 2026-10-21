@@ -132,7 +132,11 @@ struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.2), value: appLock.isLocked)
         // Plan follows the signed-in account; sign-out clears its cached status.
-        .task(id: supabase.userID) {
+        // Waits for the launch-time session restore: until then userID is nil for a
+        // signed-in user too, and treating that as a sign-out would wipe the cached
+        // Paid plan and gate a Paid user as Free.
+        .task(id: AccountKey(resolved: supabase.didResolveInitialAuth, userID: supabase.userID)) {
+            guard supabase.didResolveInitialAuth else { return }
             await subscriptions.accountChanged(to: supabase.userID)
             await appConfig.refreshIfStale(via: supabase)
             if supabase.isAuthenticated { await usage.submitIfDue(trips: store.trips, via: supabase) }
@@ -266,4 +270,9 @@ struct RootView: View {
             if !Task.isCancelled { launchIsSlow = true }
         }
     }
+}
+
+private struct AccountKey: Equatable {
+    var resolved: Bool
+    var userID: UUID?
 }

@@ -2573,6 +2573,16 @@
         }
       }
     },
+    "Next month" : {
+      "localizations" : {
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Naslednji mesec"
+          }
+        }
+      }
+    },
     "No Bluetooth audio device detected. Make sure your iPhone is currently connected to the car's audio." : {
       "localizations" : {
         "sl" : {
@@ -2982,6 +2992,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Podatki za potni nalog"
+          }
+        }
+      }
+    },
+    "Previous month" : {
+      "localizations" : {
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prejšnji mesec"
           }
         }
       }
