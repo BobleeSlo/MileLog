@@ -336,6 +336,31 @@ final class SupabaseService: ObservableObject {
         }
     }
 
+    // MARK: - Closed months
+
+    private struct ClosedMonthDTO: Codable {
+        var user_id: UUID?
+        var vehicle_id: UUID
+        var month: String       // first day, yyyy-MM-dd
+        var report_kind: String
+        var closed_at: Date
+    }
+
+    func pullClosedMonths() async throws -> [ClosedMonth] {
+        let rows: [ClosedMonthDTO] = try await client.from("closed_months")
+            .select("vehicle_id,month,report_kind,closed_at").execute().value
+        return rows.map { ClosedMonth(vehicleID: $0.vehicle_id, month: String($0.month.prefix(7)), reportKind: $0.report_kind, closedAt: $0.closed_at) }
+    }
+
+    /// Insert-only; a closure already recorded (another device) is ignored.
+    func pushClosedMonth(_ closure: ClosedMonth) async throws {
+        let dto = ClosedMonthDTO(user_id: try await currentUserId(), vehicle_id: closure.vehicleID,
+                                 month: closure.month + "-01", report_kind: closure.reportKind, closed_at: closure.closedAt)
+        try await client.from("closed_months")
+            .upsert(dto, onConflict: "user_id,vehicle_id,month", ignoreDuplicates: true)
+            .execute()
+    }
+
     // MARK: - Plans
 
     /// The account's entitlement rows (RLS returns only its own).

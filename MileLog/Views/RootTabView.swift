@@ -7,6 +7,10 @@ struct RootTabView: View {
     /// Asked once per app open while the choice is pending; Vehicles offers it too.
     @State private var showingRecordingChoice = false
     @State private var askedRecordingChoice = false
+    @EnvironmentObject var notifications: NotificationManager
+    @State private var showingPaywall = false
+    @State private var monthEndCheckMonth: Date?
+    @State private var routedTrip: Trip?
     /// Scene storage, so the tab survives the rebuild a language change
     /// triggers (the user stays in Settings instead of landing on Record).
     @SceneStorage("selectedTab") private var selectedTab = 0
@@ -31,6 +35,40 @@ struct RootTabView: View {
         }
         .tint(Theme.accent)
         .sheet(isPresented: $showingRecordingChoice) { RecordingVehicleChoiceView() }
+        .sheet(isPresented: $showingPaywall) { PaywallView() }
+        .sheet(item: Binding(get: { monthEndCheckMonth.map(RoutedMonth.init) }, set: { monthEndCheckMonth = $0?.month })) { routed in
+            NavigationStack {
+                MonthEndCheckView(month: routed.month)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) { Button("Close") { monthEndCheckMonth = nil } }
+                    }
+            }
+        }
+        .sheet(item: $routedTrip) { trip in
+            NavigationStack {
+                TripDetailView(trip: trip)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) { Button("Close") { routedTrip = nil } }
+                    }
+            }
+        }
+        // Notification taps (KTD15).
+        .onChange(of: notifications.pendingRoute) { _, route in
+            guard let route else { return }
+            notifications.pendingRoute = nil
+            switch route {
+            case .paywall:
+                if !subscriptions.plan.isPaid { showingPaywall = true }
+            case .monthEndCheck(let month):
+                if subscriptions.plan.allows(.monthEndCheck) { monthEndCheckMonth = month } else { showingPaywall = true }
+            case .trip(let id):
+                routedTrip = store.trips.first { $0.id == id }
+            }
+        }
+        // Month-end reminder follows the plan and the current month's open items.
+        .task(id: ReminderInputs(isPaid: subscriptions.plan.isPaid, openItems: currentMonthOpenItems)) {
+            await notifications.scheduleMonthEndReminder(isPaid: subscriptions.plan.isPaid, openItems: currentMonthOpenItems)
+        }
         .task(id: subscriptions.plan) {
             guard !askedRecordingChoice, store.needsRecordingVehicleChoice(isPaid: subscriptions.plan.isPaid) else { return }
             askedRecordingChoice = true
@@ -43,4 +81,20 @@ struct RootTabView: View {
             Text("iOS will ask two things. Location, set to “Always”, lets MileLog notice a drive starting while the app is closed. Notifications let it ask you to classify each trip when it ends.")
         }
     }
+}
+
+extension RootTabView {
+    fileprivate var currentMonthOpenItems: Int {
+        MonthEndCheck.build(trips: store.trips, candidates: store.mergeCandidates, month: Date()).openCount
+    }
+}
+
+private struct ReminderInputs: Equatable {
+    var isPaid: Bool
+    var openItems: Int
+}
+
+private struct RoutedMonth: Identifiable {
+    var month: Date
+    var id: Date { month }
 }

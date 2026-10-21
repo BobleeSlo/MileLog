@@ -90,6 +90,14 @@ final class Store: ObservableObject {
             trips += cloudTrips.filter {
                 !localIDs.contains($0.id) && $0.id != activeID && !deletedTripIDs.contains($0.id)
             }
+            // Locks only tighten: a trip locked on another device is locked here too.
+            let cloudLocked = Dictionary(cloudTrips.filter(\.isLocked).map { ($0.id, $0.lockedAt) }, uniquingKeysWith: { a, _ in a })
+            for i in trips.indices where !trips[i].isLocked {
+                if let lockedAt = cloudLocked[trips[i].id] {
+                    trips[i].isLocked = true
+                    trips[i].lockedAt = lockedAt ?? Date()
+                }
+            }
             tripsSyncFailed = false
         } else {
             tripsSyncFailed = true
@@ -258,16 +266,93 @@ final class Store: ObservableObject {
             return .skippedAwaitingSettings
         }
 
-        let cutoff = Date().addingTimeInterval(-Double(settings.lockAfterDays) * 86_400)
+        // KTD10: a trip locks when its month is closed or the set number of
+        // days into the next month has passed. Already locked trips stay locked.
+        let now = Date()
+        let closed = Set(closedMonths.map(\.key))
         var lockedCount = 0
-        for i in trips.indices where !trips[i].isLocked && trips[i].startedAt < cutoff {
+        var closureEntries: [PendingAuditEntry] = []
+        for i in trips.indices where !trips[i].isLocked {
+            guard MonthLocking.shouldLock(trips[i], closed: closed, daysIntoNextMonth: settings.lockAfterDays, now: now) else { continue }
             trips[i].isLocked = true
-            trips[i].lockedAt = Date()
+            trips[i].lockedAt = now
             lockedCount += 1
             push(trips[i])
+            if MonthLocking.isInClosedMonth(trips[i], closed: closed) {
+                closureEntries.append(PendingAuditEntry(tripID: trips[i].id, field: "is_locked", oldValue: "false",
+                                                        newValue: "month closed \(MonthLocking.monthKey(trips[i].startedAt))"))
+            }
         }
         if lockedCount > 0 { save() }
+        if !closureEntries.isEmpty {
+            pendingAuditEntries += closureEntries
+            Task { await flushPendingAuditEntries() }
+        }
         return .locked(lockedCount)
+    }
+
+    // MARK: - Closed months
+
+    /// Months closed by generating their report after they ended (KTD10).
+    @Published private(set) var closedMonths: [ClosedMonth] = Store.loadClosedMonths(key: "MileLog.closedMonths")
+
+    /// Closures not yet confirmed by the cloud; pushed at the next sync.
+    private var pendingClosedMonths: [ClosedMonth] {
+        get { Self.loadClosedMonths(key: tombstoneKey("MileLog.closedMonths.pending")) }
+        set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: tombstoneKey("MileLog.closedMonths.pending")) }
+    }
+
+    private nonisolated static func loadClosedMonths(key: String) -> [ClosedMonth] {
+        UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode([ClosedMonth].self, from: $0) } ?? []
+    }
+
+    private func saveClosedMonths() {
+        UserDefaults.standard.set(try? JSONEncoder().encode(closedMonths), forKey: "MileLog.closedMonths")
+    }
+
+    /// Generating a report closes its month for the vehicles in it — only once
+    /// the month has ended; a report for the current month closes nothing.
+    func closeMonth(year: Int, month: Int, vehicleIDs: Set<UUID>, reportKind: String, now: Date = Date()) {
+        let calendar = Calendar.current
+        guard let date = calendar.date(from: DateComponents(year: year, month: month, day: 1)),
+              MonthLocking.monthHasEnded(date, now: now, calendar: calendar) else { return }
+        let key = MonthLocking.monthKey(date, calendar: calendar)
+        let existing = Set(closedMonths.map(\.key))
+        let new = vehicleIDs
+            .filter { id in trips.contains { $0.vehicleID == id && MonthLocking.monthKey($0.startedAt, calendar: calendar) == key } }
+            .map { ClosedMonth(vehicleID: $0, month: key, reportKind: reportKind, closedAt: now) }
+            .filter { !existing.contains($0.key) }
+        guard !new.isEmpty else { return }
+        closedMonths += new
+        saveClosedMonths()
+        pendingClosedMonths += new
+        applyAutomaticLocks()
+        Task { await flushPendingClosedMonths() }
+    }
+
+    private var isFlushingClosedMonths = false
+
+    func flushPendingClosedMonths() async {
+        guard let supabase, !isFlushingClosedMonths else { return }
+        isFlushingClosedMonths = true
+        defer { isFlushingClosedMonths = false }
+        for closure in pendingClosedMonths {
+            do {
+                try await supabase.pushClosedMonth(closure)
+                pendingClosedMonths.removeAll { $0.key == closure.key }
+            } catch {
+                break // offline: retried at the next sync
+            }
+        }
+    }
+
+    /// Adopts closures made on other devices.
+    private func mergeCloudClosedMonths(_ cloud: [ClosedMonth]) {
+        let known = Set(closedMonths.map(\.key))
+        let new = cloud.filter { !known.contains($0.key) }
+        guard !new.isEmpty else { return }
+        closedMonths += new
+        saveClosedMonths()
     }
 
     // MARK: - Lookups
@@ -926,6 +1011,8 @@ final class Store: ObservableObject {
             trips = []
             settings = UserSettings()
             recordingVehicleID = nil
+            closedMonths = []
+            saveClosedMonths()
             detector?.disable()
             // Purely local/on-device, but records raw GPS coordinates and
             // driving history for whichever account was signed in when
@@ -999,6 +1086,14 @@ final class Store: ObservableObject {
             trips += cloudTrips.filter {
                 !localIDs.contains($0.id) && $0.id != activeID && !deletedTripIDs.contains($0.id)
             }
+            // Locks only tighten: a trip locked on another device is locked here too.
+            let cloudLocked = Dictionary(cloudTrips.filter(\.isLocked).map { ($0.id, $0.lockedAt) }, uniquingKeysWith: { a, _ in a })
+            for i in trips.indices where !trips[i].isLocked {
+                if let lockedAt = cloudLocked[trips[i].id] {
+                    trips[i].isLocked = true
+                    trips[i].lockedAt = lockedAt ?? Date()
+                }
+            }
             tripsSyncFailed = false
         } else {
             tripsSyncFailed = true
@@ -1062,6 +1157,11 @@ final class Store: ObservableObject {
         // (round-6 UX review finding). Placed after the settings pull so
         // it reflects the account that actually just signed in.
         detector?.syncToSettings()
+        // Closed months from every device, before the sweep below uses them.
+        if let cloudClosures = try? await supabase.pullClosedMonths() {
+            mergeCloudClosedMonths(cloudClosures)
+        }
+        await flushPendingClosedMonths()
         // Now that this account's real `lockAfterDays` is known, run the
         // sweep that `applyAutomaticLocks()` deliberately skipped while
         // settings were still unreconciled (see its own guard).

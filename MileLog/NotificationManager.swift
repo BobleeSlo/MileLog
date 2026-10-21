@@ -20,6 +20,14 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     private let center = UNUserNotificationCenter.current()
     private let classifyCategoryID = "TRIP_CLASSIFY"
 
+    /// Where a tapped notification should take the user; RootTabView consumes it.
+    enum Route: Equatable {
+        case paywall
+        case monthEndCheck(Date)
+        case trip(UUID)
+    }
+    @Published var pendingRoute: Route?
+
     override init() {
         super.init()
         center.delegate = self
@@ -119,6 +127,34 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         try? await center.add(request)
     }
 
+    // MARK: - Month-end reminder
+
+    private let monthEndReminderID = "month-end-reminder"
+
+    /// 18:00 on the last day of the month, for Paid users with something to fix
+    /// (KTD15). Re-run at launch, on foreground and when the plan changes.
+    func scheduleMonthEndReminder(isPaid: Bool, openItems: Int, now: Date = Date()) async {
+        center.removePendingNotificationRequests(withIdentifiers: [monthEndReminderID])
+        guard isPaid, openItems > 0,
+              let fireDate = Self.monthEndReminderDate(after: now), fireDate > now else { return }
+        let content = UNMutableNotificationContent()
+        content.title = String(localized: "Month ends today", bundle: .app)
+        content.body = String(localized: "\(openItems) trips still need checking before you close the month.", bundle: .app)
+        content.sound = .default
+        content.userInfo = ["route": "monthEndCheck"]
+        let parts = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: fireDate)
+        let request = UNNotificationRequest(identifier: monthEndReminderID, content: content,
+                                            trigger: UNCalendarNotificationTrigger(dateMatching: parts, repeats: false))
+        try? await center.add(request)
+    }
+
+    /// 18:00 on the last day of `now`'s month.
+    nonisolated static func monthEndReminderDate(after now: Date, calendar: Calendar = .current) -> Date? {
+        guard let month = calendar.dateInterval(of: .month, for: now),
+              let lastDay = calendar.date(byAdding: .day, value: -1, to: month.end) else { return nil }
+        return calendar.date(bySettingHour: 18, minute: 0, second: 0, of: lastDay)
+    }
+
     /// Free plan allowance: heads-up before the limit and the pause at it.
     func sendAllowanceNotice(_ notice: Allowance.Notice, state: AllowanceState) async {
         let content = UNMutableNotificationContent()
@@ -148,9 +184,21 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         // before the @Sendable Task closure, so we don't capture the non-Sendable
         // [AnyHashable: Any] dictionary.
         let tripIDString = response.notification.request.content.userInfo["tripID"] as? String
+        let routeString = response.notification.request.content.userInfo["route"] as? String
+        let isPlainTap = actionID == UNNotificationDefaultActionIdentifier
 
         Task { @MainActor in
-            self.handleAction(actionID: actionID, tripIDString: tripIDString)
+            if isPlainTap {
+                // A tap on the notification itself opens the matching screen (KTD15).
+                switch routeString {
+                case "paywall": self.pendingRoute = .paywall
+                case "monthEndCheck": self.pendingRoute = .monthEndCheck(Date())
+                default:
+                    if let id = tripIDString.flatMap(UUID.init(uuidString:)) { self.pendingRoute = .trip(id) }
+                }
+            } else {
+                self.handleAction(actionID: actionID, tripIDString: tripIDString)
+            }
             completionHandler()
         }
     }

@@ -359,7 +359,8 @@ struct UserSettings: Codable, Equatable {
         workLng = try c.decodeIfPresent(Double.self, forKey: .workLng)
         autoDetectEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoDetectEnabled) ?? false
         stationaryTimeoutMinutes = try c.decodeIfPresent(Int.self, forKey: .stationaryTimeoutMinutes) ?? 5
-        lockAfterDays = try c.decodeIfPresent(Int.self, forKey: .lockAfterDays) ?? 7
+        // Days into the next month since month-aware locking (KTD10): 1–28.
+        lockAfterDays = MonthLocking.clampDays(try c.decodeIfPresent(Int.self, forKey: .lockAfterDays) ?? 7)
         energyMode = try c.decodeIfPresent(EnergyMode.self, forKey: .energyMode) ?? .balanced
         companyName = try c.decodeIfPresent(String.self, forKey: .companyName) ?? ""
         companyAddress = try c.decodeIfPresent(String.self, forKey: .companyAddress) ?? ""

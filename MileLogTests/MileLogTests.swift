@@ -346,4 +346,94 @@ final class MileLogTests: XCTestCase {
         XCTAssertNil(Store.recordingVehicle(vehicles: [golf, octavia], trips: [], chosenID: nil, isPaid: true))
         XCTAssertNil(Store.recordingVehicle(vehicles: [golf], trips: [], chosenID: nil, isPaid: false))
     }
+
+    // MARK: - Month-end check
+
+    private func trip(_ day: String, type: TripType = .business, customer: String = "C", purpose: String = "",
+                      reviewed: Bool = true, addresses: Bool = true, locked: Bool = false, endedMinutesAgo: Double? = nil) -> Trip {
+        let start = date(day)
+        var t = Trip(vehicleID: UUID(), type: type, purpose: purpose, customerName: customer,
+                     startedAt: start, endedAt: endedMinutesAgo.map { Date().addingTimeInterval(-$0 * 60) } ?? start.addingTimeInterval(1800),
+                     startAddress: addresses ? "A" : "", endAddress: addresses ? "B" : "",
+                     distanceKm: 5, notes: "", isLocked: locked)
+        t.reviewedAt = reviewed ? start : nil
+        return t
+    }
+
+    @MainActor
+    func testMonthEndCheckGroups() {
+        let month = date("2026-10-15T12:00:00")
+        let unreviewed = trip("2026-10-02T08:00:00", reviewed: false)
+        let noDetails = trip("2026-10-03T08:00:00", customer: "")
+        let purposeOnly = trip("2026-10-04T08:00:00", customer: "", purpose: "Delivery")
+        let privateTrip = trip("2026-10-05T08:00:00", type: .privateTrip, customer: "")
+        let otherMonth = trip("2026-09-30T08:00:00", reviewed: false)
+        let check = MonthEndCheck.build(trips: [unreviewed, noDetails, purposeOnly, privateTrip, otherMonth], candidates: [],
+                                        month: month, calendar: ljubljana, now: date("2026-11-01T08:00:00"))
+        XCTAssertEqual(check.unreviewed.map(\.id), [unreviewed.id])
+        XCTAssertEqual(check.missingDetails.map(\.id), [noDetails.id])
+        XCTAssertEqual(check.openCount, 2)
+    }
+
+    @MainActor
+    func testLockedTripsAreInformationOnly() {
+        let locked = trip("2026-10-03T08:00:00", customer: "", locked: true)
+        let check = MonthEndCheck.build(trips: [locked], candidates: [], month: date("2026-10-15T12:00:00"), calendar: ljubljana)
+        XCTAssertEqual(check.locked.map(\.id), [locked.id])
+        XCTAssertEqual(check.openCount, 0)
+    }
+
+    @MainActor
+    func testRecentTripsWithoutAddressWait() {
+        let now = Date()
+        let fresh = trip("2026-10-03T08:00:00", addresses: false, endedMinutesAgo: 20)
+        var check = MonthEndCheck.build(trips: [fresh], candidates: [], month: fresh.startedAt, now: now)
+        XCTAssertTrue(check.missingAddresses.isEmpty)
+        check = MonthEndCheck.build(trips: [fresh], candidates: [], month: fresh.startedAt, now: now.addingTimeInterval(7200))
+        XCTAssertEqual(check.missingAddresses.count, 1)
+    }
+
+    @MainActor
+    func testSplitsAppearOnceAndCleanMonthIsEmpty() {
+        let a = trip("2026-10-03T08:00:00"), b = trip("2026-10-03T08:35:00")
+        let check = MonthEndCheck.build(trips: [a, b], candidates: [Store.MergeCandidate(first: a, second: b)],
+                                        month: a.startedAt, calendar: ljubljana)
+        XCTAssertEqual(check.likelySplits.count, 1)
+        XCTAssertEqual(check.openCount, 1)
+        XCTAssertTrue(MonthEndCheck.build(trips: [a], candidates: [], month: a.startedAt, calendar: ljubljana).isClean)
+    }
+
+    // MARK: - Month-aware locking
+
+    func testTripLocksSevenDaysIntoTheNextMonth() {
+        // AE7
+        let t = trip("2026-11-02T08:00:00")
+        XCTAssertFalse(MonthLocking.shouldLock(t, closed: [], daysIntoNextMonth: 7, now: date("2026-11-30T12:00:00"), calendar: ljubljana))
+        XCTAssertTrue(MonthLocking.shouldLock(t, closed: [], daysIntoNextMonth: 7, now: date("2026-12-08T12:00:00"), calendar: ljubljana))
+    }
+
+    func testClosedMonthLocksOnlyItsVehicles() {
+        let own = trip("2026-10-20T08:00:00"), company = trip("2026-10-20T09:00:00")
+        let closed: Set<ClosedMonthKey> = [ClosedMonthKey(vehicleID: own.vehicleID, month: "2026-10")]
+        let now = date("2026-11-02T08:00:00")
+        XCTAssertTrue(MonthLocking.shouldLock(own, closed: closed, daysIntoNextMonth: 7, now: now, calendar: ljubljana))
+        XCTAssertFalse(MonthLocking.shouldLock(company, closed: closed, daysIntoNextMonth: 7, now: now, calendar: ljubljana))
+    }
+
+    func testCurrentMonthReportClosesNothing() {
+        XCTAssertFalse(MonthLocking.monthHasEnded(date("2026-10-15T08:00:00"), now: date("2026-10-15T09:00:00"), calendar: ljubljana))
+        XCTAssertTrue(MonthLocking.monthHasEnded(date("2026-10-15T08:00:00"), now: date("2026-11-01T00:00:00"), calendar: ljubljana))
+    }
+
+    func testLockSettingIsClampedToTwentyEightDays() throws {
+        let json = try JSONSerialization.data(withJSONObject: ["lockAfterDays": 60])
+        XCTAssertEqual(try JSONDecoder().decode(UserSettings.self, from: json).lockAfterDays, 28)
+        XCTAssertEqual(MonthLocking.clampDays(0), 1)
+    }
+
+    func testReminderIsOnTheLastDayAtSix() {
+        let fire = NotificationManager.monthEndReminderDate(after: date("2026-02-10T08:00:00"), calendar: ljubljana)!
+        let c = ljubljana.dateComponents([.month, .day, .hour], from: fire)
+        XCTAssertEqual([c.month, c.day, c.hour], [2, 28, 18])
+    }
 }

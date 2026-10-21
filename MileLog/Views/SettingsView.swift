@@ -153,11 +153,11 @@ struct SettingsView: View {
                 Section {
                     PrettyStepper(
                         value: $store.settings.lockAfterDays,
-                        range: 1...90,
-                        label: "Lock trips after",
-                        unit: "days"
+                        range: 1...MonthLocking.maxDaysIntoNextMonth,
+                        label: "Lock a month's trips",
+                        unit: "days into the next month"
                     )
-                    Text("Once locked, a trip's mileage / date / vehicle become immutable. Edits to purpose, customer, and notes are still allowed but recorded in the audit log.")
+                    Text("A month's trips stay editable until you generate its report after the month ends, or until this many days into the next month. Once locked, a trip's mileage / date / vehicle become immutable. Edits to purpose, customer, and notes are still allowed but recorded in the audit log.")
                         .font(.footnote)
                         .foregroundColor(.secondary)
 
@@ -626,13 +626,18 @@ struct SettingsView: View {
             candidateTrips: candidates,
             formatRow: { trip in AnyView(ownCarRow(trip: trip)) },
             generate: { chosen in
-                PDFReporter.generateMonthlyOwnCar(
+                let result = PDFReporter.generateMonthlyOwnCar(
                     trips: chosen,
                     vehicleLookup: { store.vehicle($0) },
                     businessRate: businessRate,
                     commuteRate: commuteRate,
                     year: year, month: month
                 )
+                // A report for an ended month closes it for its vehicles (KTD10).
+                if result != nil {
+                    store.closeMonth(year: year, month: month, vehicleIDs: Set(chosen.map(\.vehicleID)), reportKind: "own_car")
+                }
+                return result
             }
         )
     }
@@ -669,12 +674,16 @@ struct SettingsView: View {
                 defaultSelected: candidates.filter { $0.type != .privateTrip },
                 formatRow: { trip in AnyView(logbookRow(trip: trip)) },
                 generate: { chosen in
-                    PDFReporter.generateCompanyCarLogbook(
+                    let result = PDFReporter.generateCompanyCarLogbook(
                         trips: chosen,
                         vehicle: captured,
                         settings: store.settings,
                         year: year, month: month
                     )
+                    if result != nil {
+                        store.closeMonth(year: year, month: month, vehicleIDs: [captured.id], reportKind: "company_logbook")
+                    }
+                    return result
                 }
             )
         }

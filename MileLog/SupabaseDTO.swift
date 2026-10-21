@@ -212,7 +212,7 @@ struct UserSettingsDTO: Codable {
             workLng: work_lng,
             autoDetectEnabled: auto_detect_enabled,
             stationaryTimeoutMinutes: stationary_timeout_minutes,
-            lockAfterDays: lock_after_days,
+            lockAfterDays: MonthLocking.clampDays(lock_after_days),
             energyMode: EnergyMode(rawValue: energy_mode ?? "") ?? .balanced,
             companyName: company_name ?? "",
             companyAddress: company_address ?? "",
