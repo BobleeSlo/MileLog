@@ -33,11 +33,14 @@ struct ActiveTripState: Codable {
     /// Most recent GPS speed in km/h — logged for diagnostics only.
     var lastSpeedKmh: Double = 0
     var points: [RecordedPoint] = []
+    /// Source of a saved trip this one resumed (a brief-stop merge can reclaim
+    /// a manually recorded trip); nil for a fresh detection, which is `auto`.
+    var resumedSource: TripSource? = nil
 
     init(id: UUID, vehicleID: UUID, audioDeviceUID: String? = nil, audioDeviceName: String? = nil,
         startedAt: Date, startLat: Double, startLng: Double, lastLat: Double, lastLng: Double,
         distanceKm: Double, lastMovementAt: Date, lastSpeedKmh: Double = 0,
-        points: [RecordedPoint] = []) {
+        points: [RecordedPoint] = [], resumedSource: TripSource? = nil) {
         self.id = id
         self.vehicleID = vehicleID
         self.audioDeviceUID = audioDeviceUID
@@ -51,12 +54,13 @@ struct ActiveTripState: Codable {
         self.lastMovementAt = lastMovementAt
         self.lastSpeedKmh = lastSpeedKmh
         self.points = points
+        self.resumedSource = resumedSource
     }
 
     enum CodingKeys: String, CodingKey {
         case id, vehicleID, audioDeviceUID, audioDeviceName, startedAt
         case startLat, startLng, lastLat, lastLng, distanceKm, lastMovementAt
-        case lastSpeedKmh, points
+        case lastSpeedKmh, points, resumedSource
     }
 
     init(from decoder: Decoder) throws {
@@ -74,6 +78,7 @@ struct ActiveTripState: Codable {
         lastMovementAt = try c.decode(Date.self, forKey: .lastMovementAt)
         lastSpeedKmh = try c.decodeIfPresent(Double.self, forKey: .lastSpeedKmh) ?? 0
         points = try c.decodeIfPresent([RecordedPoint].self, forKey: .points) ?? []
+        resumedSource = try? c.decodeIfPresent(TripSource.self, forKey: .resumedSource)
     }
 }
 
@@ -233,6 +238,15 @@ final class TripDetector: NSObject, ObservableObject {
     /// spell rather than once per drive (round-5 UX review finding); reset
     /// by `startMonitoring()` so a later relapse alerts again.
     private var hasWarnedNoVehicle = false
+
+    /// Plan inputs for the Free allowance, wired by the app (KTD3). The defaults
+    /// never refuse a trip, so an unwired detector behaves as before.
+    var planIsPaid: () -> Bool = { true }
+    var allowanceLimit: () -> Int = { Allowance.builtInLimit }
+    /// The only vehicle that may record after a lapse to Free (KTD11); nil = any.
+    var recordingVehicle: () -> Vehicle? = { nil }
+    /// Month for which a refused start was last logged, so a paused month logs once per launch.
+    private var loggedAllowanceRefusalMonth: DateComponents?
 
     // Active-trip persistence throttle: JSON-encoding + rewriting the whole
     // active-trip file on every single GPS callback (which can arrive every
@@ -795,6 +809,35 @@ final class TripDetector: NSObject, ObservableObject {
             return
         }
 
+        // Free plan after a lapse: a drive in a car other than the recording
+        // vehicle is not recorded at all (KTD11).
+        if let only = recordingVehicle(), vehicle.id != only.id {
+            log.log("Drive in \(vehicle.name) not recorded: on the Free plan only \(only.name) records. Change the recording vehicle in Vehicles.",
+                    level: .warning)
+            motion.stop()
+            manager.stopUpdatingLocation()
+            return
+        }
+
+        // Free plan: refuse a NEW automatic trip once the month's allowance is used.
+        // Only here, after the merge check — continuing a trip (resumeTrip) never
+        // consumes a slot — and without disable(), so monitoring carries on and
+        // recording resumes by itself on the 1st (KTD3).
+        if !planIsPaid() {
+            let allowance = Allowance.state(trips: store.trips, now: startedAt, limit: allowanceLimit())
+            if allowance.isPaused {
+                let month = Calendar.current.dateComponents([.year, .month], from: startedAt)
+                if loggedAllowanceRefusalMonth != month {
+                    loggedAllowanceRefusalMonth = month
+                    log.log("Automatic trip not recorded: all \(allowance.limit) automatic trips of the Free plan are used this month. Manual recording still works; automatic recording resumes on the 1st.",
+                            level: .warning)
+                }
+                motion.stop()
+                manager.stopUpdatingLocation()
+                return
+            }
+        }
+
         let firstPoint = RecordedPoint(
             recordedAt: location.timestamp,
             lat: location.coordinate.latitude,
@@ -1159,6 +1202,18 @@ final class TripDetector: NSObject, ObservableObject {
         return true
     }
 
+    /// Heads-up at the limit minus 3 and minus 1, and the pause notice at the
+    /// limit — each once per month, for Free accounts only (KTD2).
+    private func sendAllowanceNoticeIfDue(at date: Date) {
+        guard !planIsPaid(), let notifications else { return }
+        let allowance = Allowance.state(trips: store.trips, now: date, limit: allowanceLimit())
+        guard let notice = Allowance.notice(for: allowance) else { return }
+        let key = Allowance.noticeKey(notice, now: date)
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        Task { await notifications.sendAllowanceNotice(notice, state: allowance) }
+    }
+
     /// Pulls a saved trip back out of `store.trips` and resurrects it as the
     /// active in-progress trip. Shared by the normal brief-stop merge and
     /// the relaunch-recovery fast path above — both end with the exact same
@@ -1207,7 +1262,8 @@ final class TripDetector: NSObject, ObservableObject {
                 lng: location.coordinate.longitude,
                 speedKmh: Float(max(0, location.speed) * 3.6),
                 accuracyM: Float(location.horizontalAccuracy)
-            )]
+            )],
+            resumedSource: lastTrip.source                          // merge keeps the first trip's source
         )
         activeTrip = resumed
         persistActiveTrip(force: true)
@@ -1232,6 +1288,9 @@ final class TripDetector: NSObject, ObservableObject {
     /// Skips archived vehicles — an archived vehicle should never be silently
     /// reused as the fallback for a brand-new trip.
     private func fallbackVehicle() -> Vehicle? {
+        // Free after a lapse: a drive with no Bluetooth match is filed under
+        // the recording vehicle.
+        if let only = recordingVehicle() { return only }
         // The car picked on the Record screen first: the screen showed one car
         // while an auto trip was filed under another (field test, 19 Oct).
         if let id = store.preferredVehicleID, let v = store.vehicle(id), v.isActive {
@@ -1606,8 +1665,9 @@ final class TripDetector: NSObject, ObservableObject {
             startAddress: "",
             endAddress: "",
             distanceKm: state.distanceKm,
-            notes: "Auto-detected",
-            isLocked: false
+            notes: TripSource.autoNoteMarker,
+            isLocked: false,
+            source: state.resumedSource ?? .auto
         )
         trip.startLat = state.startLat
         trip.startLng = state.startLng
@@ -1616,6 +1676,7 @@ final class TripDetector: NSObject, ObservableObject {
         store.addTrip(trip)
         log.log(String(format: "Trip ended (%@): %.1f km → %@",
                        reason, state.distanceKm, classified.type.label), level: .info)
+        if trip.source == .auto { sendAllowanceNoticeIfDue(at: trip.startedAt) }
 
         // Notify the user so they can quick-classify.
         if let notifications {

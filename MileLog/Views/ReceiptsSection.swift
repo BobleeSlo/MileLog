@@ -10,6 +10,9 @@ struct ReceiptsSection: View {
     @Binding var receipts: [Receipt]
 
     @EnvironmentObject var supabase: SupabaseService
+    @EnvironmentObject var subscriptions: SubscriptionStore
+    @EnvironmentObject var usage: Usage
+    @State private var showingPaywall = false
 
     @State private var photoItem: PhotosPickerItem?
     @State private var capturedImage: UIImage?
@@ -45,7 +48,12 @@ struct ReceiptsSection: View {
                 pendingReceiptReview(pendingImage)
             } else {
                 Button {
-                    showingSourcePicker = true
+                    // New receipt photos are Paid; existing ones stay viewable (R8).
+                    if subscriptions.plan.allows(.receipts) {
+                        showingSourcePicker = true
+                    } else {
+                        showingPaywall = true
+                    }
                 } label: {
                     if isScanning {
                         HStack { ProgressView(); Text("Scanning receipt…") }
@@ -77,6 +85,7 @@ struct ReceiptsSection: View {
         } message: {
             Text("Its photo and amount will be permanently removed from this trip.")
         }
+        .sheet(isPresented: $showingPaywall) { PaywallView() }
         .confirmationDialog("Add receipt photo", isPresented: $showingSourcePicker) {
             Button {
                 showingCamera = true
@@ -232,6 +241,7 @@ struct ReceiptsSection: View {
             saved.photoPath = path
             try await supabase.pushReceipt(saved, tripID: tripID)
             receipts.append(saved)
+            usage.record(.receiptSaves)
             newAmount = ""
             scanHint = nil
             pendingImage = nil

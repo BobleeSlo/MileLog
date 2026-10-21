@@ -2,8 +2,20 @@ import SwiftUI
 
 struct VehiclesView: View {
     @EnvironmentObject var store: Store
+    @EnvironmentObject var subscriptions: SubscriptionStore
     @State private var editingVehicle: Vehicle?
     @State private var showingAdd = false
+    @State private var showingPaywall = false
+    @State private var showingRecordingChoice = false
+
+    /// Free accounts keep one active vehicle; a second one opens the paywall.
+    private func addVehicle() {
+        if subscriptions.plan.allows(.extraVehicle, activeVehicleCount: store.activeVehicles.count) {
+            showingAdd = true
+        } else {
+            showingPaywall = true
+        }
+    }
 
     /// Confirmation alert state for "Delete permanently" on an archived vehicle.
     @State private var permanentDeleteCandidate: Vehicle?
@@ -49,12 +61,14 @@ struct VehiclesView: View {
             .navigationTitle("Vehicles")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button { showingAdd = true } label: {
+                    Button { addVehicle() } label: {
                         Image(systemName: "plus")
                     }
                     .accessibilityLabel("Add vehicle")
                 }
             }
+            .sheet(isPresented: $showingPaywall) { PaywallView() }
+            .sheet(isPresented: $showingRecordingChoice) { RecordingVehicleChoiceView() }
             .sheet(item: $editingVehicle) { vehicle in
                 VehicleEditView(vehicle: vehicle, isNew: false)
             }
@@ -102,6 +116,21 @@ struct VehiclesView: View {
 
     private var vehiclesList: some View {
         List {
+            if let recording = store.recordingVehicle(isPaid: subscriptions.plan.isPaid) {
+                Section {
+                    Button {
+                        showingRecordingChoice = true
+                    } label: {
+                        LabeledContent("Recording vehicle", value: recording.name)
+                    }
+                } footer: {
+                    Text(store.needsRecordingVehicleChoice(isPaid: subscriptions.plan.isPaid)
+                         ? "On the Free plan one vehicle records. Until you choose, the one you drove last records."
+                         : "On the Free plan only this vehicle records. Your other vehicles and all their trips stay.")
+                        .font(.caption)
+                }
+            }
+
             if !store.activeVehicles.isEmpty {
                 Section {
                     ForEach(store.activeVehicles) { vehicle in
@@ -158,7 +187,7 @@ struct VehiclesView: View {
                     .padding(.horizontal, 32)
             }
             Button {
-                showingAdd = true
+                addVehicle()
             } label: {
                 Label("Add vehicle", systemImage: "plus")
                     .font(.subheadline.weight(.semibold))
@@ -295,7 +324,12 @@ struct VehiclesView: View {
                 Label("Delete", systemImage: "trash")
             }
             Button {
-                store.restoreVehicle(vehicle)
+                // Restoring makes it active again, so it counts as an extra vehicle.
+                if subscriptions.plan.allows(.extraVehicle, activeVehicleCount: store.activeVehicles.count) {
+                    store.restoreVehicle(vehicle)
+                } else {
+                    showingPaywall = true
+                }
             } label: {
                 Label("Restore", systemImage: "arrow.uturn.backward")
             }

@@ -10,6 +10,9 @@ struct MileLogApp: App {
     @StateObject private var detector: TripDetector
     @StateObject private var appLock = AppLock()
     @StateObject private var language = AppLanguage()
+    @StateObject private var subscriptions: SubscriptionStore
+    @StateObject private var appConfig: AppConfig
+    @StateObject private var usage = Usage()
 
     init() {
         // Build the dependency graph manually so the detector can hold non-owning
@@ -38,6 +41,14 @@ struct MileLogApp: App {
         // gets around to it — see SupabaseService's own property comments.
         supabase.detector = detector
         supabase.manualLocation = location
+        let subscriptions = SubscriptionStore()
+        subscriptions.start(supabase: supabase)
+        let appConfig = AppConfig()
+        detector.planIsPaid = { [weak subscriptions] in subscriptions?.plan.isPaid ?? true }
+        detector.allowanceLimit = { [weak appConfig] in appConfig?.freeAutoTripsPerMonth ?? Allowance.builtInLimit }
+        detector.recordingVehicle = { [weak store, weak subscriptions] in
+            store?.recordingVehicle(isPaid: subscriptions?.plan.isPaid ?? true)
+        }
 
         _store = StateObject(wrappedValue: store)
         _location = StateObject(wrappedValue: location)
@@ -45,6 +56,8 @@ struct MileLogApp: App {
         _detectionLog = StateObject(wrappedValue: log)
         _notifications = StateObject(wrappedValue: notifications)
         _detector = StateObject(wrappedValue: detector)
+        _subscriptions = StateObject(wrappedValue: subscriptions)
+        _appConfig = StateObject(wrappedValue: appConfig)
     }
 
     var body: some Scene {
@@ -58,6 +71,9 @@ struct MileLogApp: App {
                 .environmentObject(detector)
                 .environmentObject(appLock)
                 .environmentObject(language)
+                .environmentObject(subscriptions)
+                .environmentObject(appConfig)
+                .environmentObject(usage)
                 // Switches every SwiftUI `Text` to the chosen language at once.
                 .environment(\.locale, language.locale)
                 // Rebuilds the screens so text computed in code (model labels,
@@ -74,6 +90,9 @@ struct RootView: View {
     @EnvironmentObject var store: Store
     @EnvironmentObject var supabase: SupabaseService
     @EnvironmentObject var appLock: AppLock
+    @EnvironmentObject var subscriptions: SubscriptionStore
+    @EnvironmentObject var appConfig: AppConfig
+    @EnvironmentObject var usage: Usage
     @Environment(\.scenePhase) private var scenePhase
     /// Set when the user opens a password-reset link from their email —
     /// see `SetNewPasswordView`. Presented over everything else, because
@@ -112,6 +131,17 @@ struct RootView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: appLock.isLocked)
+        // Plan follows the signed-in account; sign-out clears its cached status.
+        // Waits for the launch-time session restore: until then userID is nil for a
+        // signed-in user too, and treating that as a sign-out would wipe the cached
+        // Paid plan and gate a Paid user as Free.
+        .task(id: AccountKey(resolved: supabase.didResolveInitialAuth, userID: supabase.userID)) {
+            guard supabase.didResolveInitialAuth else { return }
+            usage.accountChanged(to: supabase.userID)
+            await subscriptions.accountChanged(to: supabase.userID)
+            await appConfig.refreshIfStale(via: supabase)
+            if supabase.isAuthenticated { await usage.submitIfDue(trips: store.trips, via: supabase) }
+        }
         // Receives the password-reset link from the user's email. Without
         // this the "Forgot password?" flow was a dead end — the email was
         // sent, but nothing in the app could complete it (round-6 UX
@@ -184,6 +214,10 @@ struct RootView: View {
             if phase == .active {
                 store.applyAutomaticLocks()
                 store.retryUnsyncedTrips()
+                Task {
+                    await subscriptions.refresh()
+                    await appConfig.refreshIfStale(via: supabase)
+                }
             }
         }
     }
@@ -237,4 +271,9 @@ struct RootView: View {
             if !Task.isCancelled { launchIsSlow = true }
         }
     }
+}
+
+private struct AccountKey: Equatable {
+    var resolved: Bool
+    var userID: UUID?
 }

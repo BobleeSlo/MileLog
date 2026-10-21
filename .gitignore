@@ -12,3 +12,7 @@ DerivedData/
 
 # Backups written by tools/*.py
 *.bak
+
+# Local secrets for tools/*.py
+.env
+.env.*

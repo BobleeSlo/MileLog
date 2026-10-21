@@ -43,7 +43,7 @@
 	<key>NSFaceIDUsageDescription</key>
 	<string>MileLog uses Face ID to lock the app so only you can see your trips.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>MileLog records trips in the background so you do not have to start them manually.</string>
+	<string>MileLog notices when a drive starts, even while the app is closed, and logs the trip for your mileage records. Your location is used only for your own trip log.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>MileLog measures the distance of your trips.</string>
 	<key>NSMotionUsageDescription</key>

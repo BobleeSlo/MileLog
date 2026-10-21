@@ -6,6 +6,9 @@ struct RecordTripView: View {
     @EnvironmentObject var store: Store
     @EnvironmentObject var location: LocationManager
     @EnvironmentObject var detector: TripDetector
+    @EnvironmentObject var subscriptions: SubscriptionStore
+    @EnvironmentObject var appConfig: AppConfig
+    @State private var showingPaywall = false
 
     @State private var selectedVehicleID: UUID?
     @State private var tripToClassify: Trip?
@@ -42,6 +45,36 @@ struct RecordTripView: View {
 
     private var isLive: Bool { location.isTracking || autoActive }
 
+    private var allowance: AllowanceState {
+        Allowance.state(trips: store.trips, now: Date(), limit: appConfig.freeAutoTripsPerMonth)
+    }
+
+    /// Free plan: automatic trips left this month, or the paused state (R5, F1).
+    private var allowanceCard: some View {
+        let state = allowance
+        return VStack(alignment: .leading, spacing: 10) {
+            if state.isPaused {
+                Label("Automatic recording paused", systemImage: "pause.circle.fill")
+                    .font(.headline)
+                Text("All \(state.limit) automatic trips of the Free plan are used this month. Start trips manually, or subscribe. Automatic recording resumes on the 1st.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                Label("\(state.remaining) of \(state.limit) automatic trips left this month", systemImage: "car.badge.gearshape")
+                    .font(.subheadline.weight(.semibold))
+            }
+            Button {
+                showingPaywall = true
+            } label: {
+                Text("Subscribe").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView(showsIndicators: false) {
@@ -53,6 +86,10 @@ struct RecordTripView: View {
 
                     heroBadge
                         .padding(.vertical, 8)
+
+                    if !subscriptions.plan.isPaid && store.settings.autoDetectEnabled {
+                        allowanceCard
+                    }
 
                     if !autoActive { primaryButton }
                     if showingTooShortNotice {
@@ -95,14 +132,15 @@ struct RecordTripView: View {
             }
             .scrollBounceBehavior(.basedOnSize)
             .background(backgroundWash)
+            .sheet(isPresented: $showingPaywall) { PaywallView() }
             .navigationTitle("Record")
             .navigationBarTitleDisplayMode(.inline)   // avoid large-title overlap on iOS 26
             .onAppear {
                 location.requestPermission()
                 if selectedVehicleID == nil {
                     let preferred = store.preferredVehicleID
-                    selectedVehicleID = store.activeVehicles.first(where: { $0.id == preferred })?.id
-                        ?? store.activeVehicles.first?.id
+                    selectedVehicleID = recordableVehicles.first(where: { $0.id == preferred })?.id
+                        ?? recordableVehicles.first?.id
                 }
             }
             // `onAppear` doesn't re-fire when a vehicle is added from the
@@ -125,6 +163,10 @@ struct RecordTripView: View {
                 if selectedVehicleID == nil || !vehicles.contains(where: { $0.id == selectedVehicleID }) {
                     selectedVehicleID = vehicles.first?.id
                 }
+            }
+            .onChange(of: recordableVehicles.map(\.id)) { _, ids in
+                guard !location.isTracking, let id = selectedVehicleID, !ids.contains(id) else { return }
+                selectedVehicleID = ids.first
             }
             .sheet(item: $tripToClassify) { trip in
                 ClassifyTripView(trip: trip)
@@ -248,9 +290,15 @@ struct RecordTripView: View {
         }
     }
 
+    /// Vehicles the Record screen may record with: only the recording vehicle
+    /// after a lapse to Free (KTD11), otherwise every active one.
+    private var recordableVehicles: [Vehicle] {
+        store.recordingVehicle(isPaid: subscriptions.plan.isPaid).map { [$0] } ?? store.activeVehicles
+    }
+
     private var vehicleSelector: some View {
         Menu {
-            ForEach(store.activeVehicles) { vehicle in
+            ForEach(recordableVehicles) { vehicle in
                 Button {
                     selectedVehicleID = vehicle.id
                     store.preferredVehicleID = vehicle.id
@@ -503,7 +551,8 @@ struct RecordTripView: View {
             endAddress: endAddress,
             distanceKm: distanceKm,
             notes: "",
-            isLocked: false
+            isLocked: false,
+            source: .manual
         )
         trip.startLat = startLocation?.coordinate.latitude
         trip.startLng = startLocation?.coordinate.longitude
