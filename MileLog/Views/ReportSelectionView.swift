@@ -33,7 +33,28 @@ struct ReportSelectionView: View {
     /// Store lookups.
     @State private var isGenerating = false
     @EnvironmentObject var subscriptions: SubscriptionStore
+    @EnvironmentObject var store: Store
     @State private var showingPaywall = false
+    @State private var confirmingGenerateAnyway = false
+
+    /// The report's month, from its trips.
+    private var reportMonth: Date? { candidateTrips.map(\.startedAt).min() }
+
+    /// Open month-end items for the report's month (Paid only; R16).
+    private var openCheckItems: Int {
+        guard subscriptions.plan.isPaid, let month = reportMonth else { return 0 }
+        return MonthEndCheck.build(trips: store.trips, candidates: store.mergeCandidates, month: month).openCount
+    }
+
+    private func generateNow() {
+        Task {
+            isGenerating = true
+            await Task.yield()   // let the spinner actually render first
+            result = generate(selectedTrips)
+            generationFailed = (result == nil)
+            isGenerating = false
+        }
+    }
 
     init(
         title: String,
@@ -63,6 +84,16 @@ struct ReportSelectionView: View {
 
     var body: some View {
         List {
+            if let month = reportMonth, openCheckItems > 0 {
+                Section {
+                    NavigationLink {
+                        MonthEndCheckView(month: month)
+                    } label: {
+                        Label("\(openCheckItems) items to check before you generate", systemImage: "checklist")
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
             if subtitle != nil || warning != nil {
                 Section {
                     if let subtitle {
@@ -136,6 +167,12 @@ struct ReportSelectionView: View {
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showingPaywall) { PaywallView() }
+        .confirmationDialog("Some trips still need checking", isPresented: $confirmingGenerateAnyway, titleVisibility: .visible) {
+            Button("Generate anyway") { generateNow() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The month-end check lists \(openCheckItems) items for this month.")
+        }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 if !candidateTrips.isEmpty { quickFilterMenu }
@@ -147,12 +184,10 @@ struct ReportSelectionView: View {
                         showingPaywall = true
                         return
                     }
-                    Task {
-                        isGenerating = true
-                        await Task.yield()   // let the spinner actually render first
-                        result = generate(selectedTrips)
-                        generationFailed = (result == nil)
-                        isGenerating = false
+                    if openCheckItems > 0 {
+                        confirmingGenerateAnyway = true
+                    } else {
+                        generateNow()
                     }
                 } label: {
                     if isGenerating {
