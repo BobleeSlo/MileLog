@@ -447,6 +447,12 @@ struct SettingsView: View {
                     } label: {
                         Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
                     }
+                    NavigationLink {
+                        DeleteAccountView()
+                    } label: {
+                        Label("Delete account", systemImage: "trash")
+                            .foregroundStyle(.red)
+                    }
                 } header: {
                     SectionHeaderLabel(title: "Account", systemImage: "person.crop.circle")
                 }

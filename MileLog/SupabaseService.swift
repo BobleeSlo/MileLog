@@ -336,6 +336,43 @@ final class SupabaseService: ObservableObject {
         }
     }
 
+    // MARK: - Account deletion
+
+    enum DeleteAccountError: Error {
+        case reauthRequired, offline, failed
+    }
+
+    /// Signs in again with the password, so the deletion's 10-minute check passes.
+    func reauthenticate(password: String) async throws {
+        guard let email = userEmail else { throw DeleteAccountError.failed }
+        _ = try await client.auth.signIn(email: email, password: password)
+    }
+
+    /// Calls the `delete-account` Edge Function. A "user not found" answer means
+    /// an earlier attempt already deleted the account and counts as success.
+    func deleteAccount() async throws {
+        do {
+            try await client.functions.invoke("delete-account", options: FunctionInvokeOptions(method: .post))
+        } catch FunctionsError.httpError(let code, _) where code == 404 {
+            return
+        } catch FunctionsError.httpError(let code, _) where code == 401 {
+            throw DeleteAccountError.reauthRequired
+        } catch let error as URLError where [.notConnectedToInternet, .networkConnectionLost, .timedOut].contains(error.code) {
+            throw DeleteAccountError.offline
+        } catch {
+            throw DeleteAccountError.failed
+        }
+    }
+
+    /// Local sign-out after the account no longer exists on the server.
+    func finishAfterAccountDeletion() async {
+        detector?.discardActiveTripForAccountSwitch()
+        manualLocation?.discardIfTracking()
+        detector?.disable()
+        try? await client.auth.signOut(scope: .local)
+        await refreshAuth()
+    }
+
     // MARK: - Closed months
 
     private struct ClosedMonthDTO: Codable {

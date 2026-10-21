@@ -291,6 +291,37 @@ final class Store: ObservableObject {
         return .locked(lockedCount)
     }
 
+    // MARK: - Account deletion
+
+    /// After the account is deleted on the server: discard the active trip and
+    /// every piece of local data and per-account stored state (KTD14).
+    func wipeAfterAccountDeletion() {
+        detector?.discardActiveTripForAccountSwitch()
+        detector?.disable()
+        vehicles = []
+        trips = []
+        settings = UserSettings()
+        recordingVehicleID = nil
+        preferredVehicleID = nil
+        closedMonths = []
+        saveClosedMonths()
+        // Per-account queues and tombstones, while their keys still resolve.
+        deletedTripIDs = []
+        deletedVehicleIDs = []
+        pendingAuditEntries = []
+        pendingClosedMonths = []
+        unsyncedTripIDs = []
+        detectionLog?.clear()
+        let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys
+        where key.hasPrefix("MileLog.allowance.") || key.hasPrefix("MileLog.planCache.") {
+            defaults.removeObject(forKey: key)
+        }
+        settingsReconciledUserID = nil
+        lastSyncedUserID = nil
+        save()
+    }
+
     // MARK: - Closed months
 
     /// Months closed by generating their report after they ended (KTD10).
