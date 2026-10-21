@@ -137,6 +137,7 @@ struct RootView: View {
         // Paid plan and gate a Paid user as Free.
         .task(id: AccountKey(resolved: supabase.didResolveInitialAuth, userID: supabase.userID)) {
             guard supabase.didResolveInitialAuth else { return }
+            usage.accountChanged(to: supabase.userID)
             await subscriptions.accountChanged(to: supabase.userID)
             await appConfig.refreshIfStale(via: supabase)
             if supabase.isAuthenticated { await usage.submitIfDue(trips: store.trips, via: supabase) }

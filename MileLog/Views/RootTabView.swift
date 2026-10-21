@@ -56,8 +56,10 @@ struct RootTabView: View {
             }
         }
         // The one-time usage question (KTD13); the answer can change in Settings.
-        .task {
-            if usage.consent == nil, !store.trips.isEmpty { askingUsageConsent = true }
+        // Re-evaluated when the account's answer loads and when the first trip
+        // arrives (a fresh install's sync, or the first recorded drive).
+        .onChange(of: usage.accountID != nil && usage.consent == nil && !store.trips.isEmpty, initial: true) { _, shouldAsk in
+            if shouldAsk { askingUsageConsent = true }
         }
         .alert("Share anonymous usage?", isPresented: $askingUsageConsent) {
             Button("Share") { usage.consent = true }
@@ -66,7 +68,8 @@ struct RootTabView: View {
             Text("Once a month MileLog would send rough counts — such as 11–15 automatic trips — with no trips, places or device details. You can change this in Settings.")
         }
         // Notification taps (KTD15).
-        .onChange(of: notifications.pendingRoute) { _, route in
+        // initial: a tap that launched the app can set the route before this view exists.
+        .onChange(of: notifications.pendingRoute, initial: true) { _, route in
             guard let route else { return }
             notifications.pendingRoute = nil
             switch route {

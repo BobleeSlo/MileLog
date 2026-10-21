@@ -442,17 +442,39 @@ final class MileLogTests: XCTestCase {
     func testNoUsageWithoutConsent() {
         let defaults = UserDefaults(suiteName: "MileLogTests.usage")!
         defaults.removePersistentDomain(forName: "MileLogTests.usage")
+        let account = UUID()
+        let key = Usage.countKey(.reportGenerations, month: "2026-10", account: account)
         let usage = MainActor.assumeIsolated { Usage(defaults: defaults) }
         MainActor.assumeIsolated {
+            usage.accountChanged(to: account)
             usage.consent = false
             usage.record(.reportGenerations, now: date("2026-10-10T08:00:00"))
         }
-        XCTAssertEqual(defaults.integer(forKey: Usage.countKey(.reportGenerations, month: "2026-10")), 0)
+        XCTAssertEqual(defaults.integer(forKey: key), 0)
         MainActor.assumeIsolated {
             usage.consent = true
             usage.record(.reportGenerations, now: date("2026-10-10T08:00:00"))
         }
-        XCTAssertEqual(defaults.integer(forKey: Usage.countKey(.reportGenerations, month: "2026-10")), 1)
+        XCTAssertEqual(defaults.integer(forKey: key), 1)
+    }
+
+    func testConsentBelongsToOneAccount() {
+        let defaults = UserDefaults(suiteName: "MileLogTests.usage2")!
+        defaults.removePersistentDomain(forName: "MileLogTests.usage2")
+        let a = UUID(), b = UUID()
+        let usage = MainActor.assumeIsolated { Usage(defaults: defaults) }
+        let consentForB: Bool? = MainActor.assumeIsolated {
+            usage.accountChanged(to: a)
+            usage.consent = true
+            usage.accountChanged(to: b)
+            return usage.consent
+        }
+        XCTAssertNil(consentForB)   // B is asked, never inherits A's yes
+        let consentForA: Bool? = MainActor.assumeIsolated {
+            usage.accountChanged(to: a)
+            return usage.consent
+        }
+        XCTAssertEqual(consentForA, true)
     }
 
     func testOctoberIsSentAsABucketAfterItEnds() {

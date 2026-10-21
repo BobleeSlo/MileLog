@@ -16,40 +16,55 @@ final class Usage: ObservableObject {
         case monthEndCheckOpens = "month_end_check_opens"
     }
 
-    /// nil until the user has answered the one-time question.
+    /// The signed-in account's answer; nil until it has answered the one-time
+    /// question (or while nobody is signed in). Never shared between accounts.
     @Published var consent: Bool? {
-        didSet { defaults.set(consent.map { $0 ? "yes" : "no" }, forKey: Self.consentKey) }
+        didSet {
+            guard let prefix else { return }
+            defaults.set(consent.map { $0 ? "yes" : "no" }, forKey: prefix + "consent")
+        }
     }
+    /// Consent, counts and sent markers are all stored per account.
+    @Published private(set) var accountID: UUID?
 
     private let defaults: UserDefaults
-    private static let consentKey = "MileLog.usage.consent"
+    private var prefix: String? { accountID.map(Self.keyPrefix) }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        consent = defaults.string(forKey: Self.consentKey).map { $0 == "yes" }
     }
 
-    /// Counts an event for this month — only while consent is on.
+    nonisolated static func keyPrefix(for account: UUID) -> String {
+        "MileLog.usage.\(account.uuidString.lowercased())."
+    }
+
+    /// Loads the signed-in account's answer (nil on sign-out).
+    func accountChanged(to account: UUID?) {
+        accountID = account
+        consent = prefix.flatMap { defaults.string(forKey: $0 + "consent") }.map { $0 == "yes" }
+    }
+
+    /// Counts an event for this month — only while this account's consent is on.
     func record(_ metric: Metric, now: Date = Date()) {
-        guard consent == true, metric != .autoTrips else { return }
-        let key = Self.countKey(metric, month: MonthLocking.monthKey(now))
+        guard consent == true, metric != .autoTrips, let account = accountID else { return }
+        let key = Self.countKey(metric, month: MonthLocking.monthKey(now), account: account)
         defaults.set(defaults.integer(forKey: key) + 1, forKey: key)
     }
 
     /// Sends last month's figures once, on or after its random send day.
     func submitIfDue(trips: [Trip], via supabase: SupabaseService, now: Date = Date(), calendar: Calendar = .current) async {
-        guard consent == true,
+        guard consent == true, let account = accountID, let prefix,
               let lastMonth = calendar.date(byAdding: .month, value: -1, to: now) else { return }
         let month = MonthLocking.monthKey(lastMonth, calendar: calendar)
-        let sentKey = "MileLog.usage.sent.\(month)"
+        let sentKey = prefix + "sent.\(month)"
         guard !defaults.bool(forKey: sentKey) else { return }
 
         // A random day 1–20 of the following month, fixed once chosen.
-        let dayKey = "MileLog.usage.sendDay.\(month)"
+        let dayKey = prefix + "sendDay.\(month)"
         if defaults.integer(forKey: dayKey) == 0 { defaults.set(Int.random(in: 1...20), forKey: dayKey) }
         guard calendar.component(.day, from: now) >= defaults.integer(forKey: dayKey) else { return }
 
-        let counts = Dictionary(uniqueKeysWithValues: Metric.allCases.map { ($0, defaults.integer(forKey: Self.countKey($0, month: month))) })
+        let counts = Dictionary(uniqueKeysWithValues: Metric.allCases.map { ($0, defaults.integer(forKey: Self.countKey($0, month: month, account: account))) })
         let submissions = Self.submissions(month: lastMonth, now: now, trips: trips, counts: counts, calendar: calendar)
         // Marked per metric, so a retry after a partial failure never counts one twice.
         for s in submissions {
@@ -67,8 +82,8 @@ final class Usage: ObservableObject {
 
     // MARK: - Pure rules
 
-    nonisolated static func countKey(_ metric: Metric, month: String) -> String {
-        "MileLog.usage.count.\(month).\(metric.rawValue)"
+    nonisolated static func countKey(_ metric: Metric, month: String, account: UUID) -> String {
+        keyPrefix(for: account) + "count.\(month).\(metric.rawValue)"
     }
 
     nonisolated static func bucket(_ n: Int) -> String {

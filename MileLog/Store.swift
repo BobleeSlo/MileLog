@@ -306,8 +306,10 @@ final class Store: ObservableObject {
         unsyncedTripIDs = []
         detectionLog?.clear()
         let defaults = UserDefaults.standard
+        let usagePrefix = lastSyncedUserID.map { Usage.keyPrefix(for: $0) }
         for key in defaults.dictionaryRepresentation().keys
-        where key.hasPrefix("MileLog.allowance.") || key.hasPrefix("MileLog.planCache.") {
+        where key.hasPrefix("MileLog.allowance.") || key.hasPrefix("MileLog.planCache.")
+            || usagePrefix.map(key.hasPrefix) == true {
             defaults.removeObject(forKey: key)
         }
         settingsReconciledUserID = nil
@@ -1083,6 +1085,13 @@ final class Store: ObservableObject {
         }
         await flushPendingAuditEntries()
 
+        // Pull first and adopt locks made on other devices (a month closed
+        // there): the bulk push below upserts is_locked, so pushing a stale
+        // unlocked copy first would reopen that month in the cloud.
+        let cloudTripsBeforePush = try? await supabase.pullTrips()
+        guard myGeneration == syncGeneration else { return }
+        if let cloudTripsBeforePush { adoptCloudLocks(from: cloudTripsBeforePush) }
+
         for vehicle in vehicles { try? await supabase.pushVehicle(vehicle) }
         for trip in trips {
             if (try? await supabase.pushTrip(trip)) != nil { markTripSynced(trip.id) }
@@ -1118,13 +1127,13 @@ final class Store: ObservableObject {
         } else {
             vehiclesSyncFailed = true
         }
-        if let cloudTrips = try? await supabase.pullTrips() {
+        // The pull before the push already holds every other device's trips.
+        if let cloudTrips = cloudTripsBeforePush {
             let localIDs = Set(trips.map(\.id))
             let activeID = detector?.activeTrip?.id
             trips += cloudTrips.filter {
                 !localIDs.contains($0.id) && $0.id != activeID && !deletedTripIDs.contains($0.id)
             }
-            adoptCloudLocks(from: cloudTrips)
             tripsSyncFailed = false
         } else {
             tripsSyncFailed = true
