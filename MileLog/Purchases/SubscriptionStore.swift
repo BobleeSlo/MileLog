@@ -14,7 +14,20 @@ final class SubscriptionStore: ObservableObject {
     /// Must match App Store Connect, MileLog.storekit and the Edge Functions' APPLE_PRODUCT_IDS.
     nonisolated static let productIDs = ["BT1.MileLog.paid.monthly", "BT1.MileLog.paid.yearly"]
 
+    /// The plan the app acts on: the resolved plan, or the developer override in test builds.
     @Published private(set) var plan: PlanStatus = .free
+    /// What the server, this device and the cache say; never the override.
+    private var resolvedPlan: PlanStatus = .free
+
+    /// Test builds only (see `DeveloperPlanOverride`).
+    @Published var developerOverride: DeveloperPlanOverride {
+        didSet {
+            defaults.set(developerOverride.rawValue, forKey: Self.overrideKey)
+            publishPlan()
+        }
+    }
+    private static let overrideKey = "MileLog.dev.planOverride"
+    private let defaults: UserDefaults
     @Published private(set) var products: [Product] = []
     @Published private(set) var lastError: String?
 
@@ -25,13 +38,16 @@ final class SubscriptionStore: ObservableObject {
     private let cache: PlanCache
 
     init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         cache = PlanCache(defaults: defaults)
+        developerOverride = defaults.string(forKey: Self.overrideKey).flatMap(DeveloperPlanOverride.init(rawValue:)) ?? .none
         // A background relaunch for a drive can reach the trip detector before
         // any view has resolved the account: start from the last account's
         // cached plan so a Paid user is never refused (KTD5's offline rule).
         if let last = cache.lastUserID {
-            plan = PlanResolver.resolve(server: nil, local: [], cache: cache.load(for: last), userID: last, now: Date())
+            resolvedPlan = PlanResolver.resolve(server: nil, local: [], cache: cache.load(for: last), userID: last, now: Date())
         }
+        publishPlan()
     }
 
     /// Starts listening for transactions; call once at launch.
@@ -82,8 +98,8 @@ final class SubscriptionStore: ObservableObject {
         setPlan(PlanResolver.resolve(server: server, local: local, cache: cache.load(for: userID), userID: userID, now: now))
         if server != nil {
             var until: Date?
-            if case .paid(let date) = plan { until = date }
-            cache.save(CachedPlan(userID: userID, isPaid: plan.isPaid, expiresAt: until, checkedAt: now))
+            if case .paid(let date) = resolvedPlan { until = date }
+            cache.save(CachedPlan(userID: userID, isPaid: resolvedPlan.isPaid, expiresAt: until, checkedAt: now))
         }
     }
 
@@ -143,9 +159,15 @@ final class SubscriptionStore: ObservableObject {
         }
     }
 
-    /// Assigns only on change, so observers don't re-render for an unchanged plan.
     private func setPlan(_ new: PlanStatus) {
-        if plan != new { plan = new }
+        resolvedPlan = new
+        publishPlan()
+    }
+
+    /// Assigns only on change, so observers don't re-render for an unchanged plan.
+    private func publishPlan() {
+        let effective = BuildChannel.isTestBuild ? developerOverride.apply(to: resolvedPlan) : resolvedPlan
+        if plan != effective { plan = effective }
     }
 
     /// Verified current entitlements for MileLog's subscriptions, with their signed form.
@@ -164,12 +186,7 @@ final class SubscriptionStore: ObservableObject {
     /// App Store builds only trust production transactions; TestFlight and debug
     /// builds also accept sandbox and Xcode ones (KTD5).
     private func isAcceptedEnvironment(_ tx: Transaction) -> Bool {
-        #if DEBUG
-        return true
-        #else
-        if tx.environment == .production { return true }
-        return Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
-        #endif
+        tx.environment == .production || BuildChannel.isTestBuild
     }
 }
 

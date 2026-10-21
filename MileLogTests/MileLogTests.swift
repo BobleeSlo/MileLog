@@ -472,4 +472,30 @@ final class MileLogTests: XCTestCase {
     func testBuckets() {
         XCTAssertEqual([0, 1, 5, 6, 15, 16, 26, 51, 101].map(Usage.bucket), ["0", "1-5", "1-5", "6-10", "11-15", "16-25", "26-50", "51-100", "101+"])
     }
+
+    // MARK: - Developer plan override
+
+    func testOverrideMapsToThePretendedPlan() {
+        let real = PlanStatus.paid(until: nil)
+        XCTAssertEqual(DeveloperPlanOverride.none.apply(to: real), real)
+        XCTAssertEqual(DeveloperPlanOverride.free.apply(to: real), .free)
+        XCTAssertEqual(DeveloperPlanOverride.lapsed.apply(to: real), .free)
+        XCTAssertEqual(DeveloperPlanOverride.otherAccount.apply(to: real), .freeOtherAccount)
+        XCTAssertTrue(DeveloperPlanOverride.paid.apply(to: .free).isPaid)
+    }
+
+    @MainActor
+    func testOverrideNeverReachesThePlanCache() async {
+        let defaults = UserDefaults(suiteName: "MileLogTests.override")!
+        defaults.removePersistentDomain(forName: "MileLogTests.override")
+        let cache = PlanCache(defaults: defaults)
+        cache.save(CachedPlan(userID: me, isPaid: false, expiresAt: nil, checkedAt: now))
+        cache.lastUserID = me
+        let store = SubscriptionStore(defaults: defaults)
+        store.developerOverride = .paid
+        XCTAssertTrue(store.plan.isPaid)          // tests run as a debug build
+        XCTAssertEqual(cache.load(for: me)?.isPaid, false)
+        store.developerOverride = .none
+        XCTAssertFalse(store.plan.isPaid)
+    }
 }

@@ -99,36 +99,6 @@
     },
     "%lld items to check" : {
       "localizations" : {
-        "sl" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld postavka za pregled"
-                }
-              },
-              "two" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld postavki za pregled"
-                }
-              },
-              "few" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld postavke za pregled"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld postavk za pregled"
-                }
-              }
-            }
-          }
-        },
         "en" : {
           "variations" : {
             "plural" : {
@@ -146,41 +116,41 @@
               }
             }
           }
-        }
-      }
-    },
-    "%lld items to check before you generate" : {
-      "localizations" : {
+        },
         "sl" : {
           "variations" : {
             "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld postavka za pregled pred ustvarjanjem"
-                }
-              },
-              "two" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld postavki za pregled pred ustvarjanjem"
-                }
-              },
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%lld postavke za pregled pred ustvarjanjem"
+                  "value" : "%lld postavke za pregled"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld postavka za pregled"
                 }
               },
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%lld postavk za pregled pred ustvarjanjem"
+                  "value" : "%lld postavk za pregled"
+                }
+              },
+              "two" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld postavki za pregled"
                 }
               }
             }
           }
-        },
+        }
+      }
+    },
+    "%lld items to check before you generate" : {
+      "localizations" : {
         "en" : {
           "variations" : {
             "plural" : {
@@ -194,6 +164,36 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld items to check before you generate"
+                }
+              }
+            }
+          }
+        },
+        "sl" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld postavke za pregled pred ustvarjanjem"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld postavka za pregled pred ustvarjanjem"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld postavk za pregled pred ustvarjanjem"
+                }
+              },
+              "two" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld postavki za pregled pred ustvarjanjem"
                 }
               }
             }
@@ -288,36 +288,6 @@
     },
     "%lld trips still need checking before you close the month." : {
       "localizations" : {
-        "sl" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld vožnjo je treba še preveriti, preden zaključite mesec."
-                }
-              },
-              "two" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld vožnji je treba še preveriti, preden zaključite mesec."
-                }
-              },
-              "few" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld vožnje je treba še preveriti, preden zaključite mesec."
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld voženj je treba še preveriti, preden zaključite mesec."
-                }
-              }
-            }
-          }
-        },
         "en" : {
           "variations" : {
             "plural" : {
@@ -331,6 +301,36 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld trips still need checking before you close the month."
+                }
+              }
+            }
+          }
+        },
+        "sl" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld vožnje je treba še preveriti, preden zaključite mesec."
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld vožnjo je treba še preveriti, preden zaključite mesec."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld voženj je treba še preveriti, preden zaključite mesec."
+                }
+              },
+              "two" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld vožnji je treba še preveriti, preden zaključite mesec."
                 }
               }
             }
@@ -1546,6 +1546,16 @@
         }
       }
     },
+    "Developer" : {
+      "localizations" : {
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Razvijalec"
+          }
+        }
+      }
+    },
     "Device" : {
       "localizations" : {
         "sl" : {
@@ -2061,6 +2071,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Jezik"
+          }
+        }
+      }
+    },
+    "Lapsed (Paid ended)" : {
+      "localizations" : {
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Potekel (plačljivi končan)"
           }
         }
       }
@@ -2996,6 +3016,16 @@
         }
       }
     },
+    "Pretend plan" : {
+      "localizations" : {
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Simuliraj paket"
+          }
+        }
+      }
+    },
     "Previous month" : {
       "localizations" : {
         "sl" : {
@@ -3093,6 +3123,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cena na km"
+          }
+        }
+      }
+    },
+    "Real plan" : {
+      "localizations" : {
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dejanski paket"
           }
         }
       }
@@ -3872,6 +3912,16 @@
         }
       }
     },
+    "Test builds only. The app behaves as if on this plan; your real subscription and the server are unchanged. App Store builds never show this." : {
+      "localizations" : {
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Samo v testnih različicah. Aplikacija se obnaša, kot da imate ta paket; vaša dejanska naročnina in strežnik ostanejo nespremenjeni. Različice iz App Stora tega nikoli ne prikažejo."
+          }
+        }
+      }
+    },
     "That confirmation link didn't work" : {
       "localizations" : {
         "sl" : {
@@ -3948,36 +3998,6 @@
     },
     "The month-end check lists %lld items for this month." : {
       "localizations" : {
-        "sl" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "Pregled ob koncu meseca navaja %lld postavko za ta mesec."
-                }
-              },
-              "two" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "Pregled ob koncu meseca navaja %lld postavki za ta mesec."
-                }
-              },
-              "few" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "Pregled ob koncu meseca navaja %lld postavke za ta mesec."
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "Pregled ob koncu meseca navaja %lld postavk za ta mesec."
-                }
-              }
-            }
-          }
-        },
         "en" : {
           "variations" : {
             "plural" : {
@@ -3991,6 +4011,36 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "The month-end check lists %lld items for this month."
+                }
+              }
+            }
+          }
+        },
+        "sl" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Pregled ob koncu meseca navaja %lld postavke za ta mesec."
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Pregled ob koncu meseca navaja %lld postavko za ta mesec."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Pregled ob koncu meseca navaja %lld postavk za ta mesec."
+                }
+              },
+              "two" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Pregled ob koncu meseca navaja %lld postavki za ta mesec."
                 }
               }
             }

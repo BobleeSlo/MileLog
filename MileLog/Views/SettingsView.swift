@@ -432,6 +432,29 @@ struct SettingsView: View {
                     .font(.caption)
                 }
 
+                // MARK: Developer (debug and TestFlight builds only)
+                if BuildChannel.isTestBuild {
+                    Section {
+                        Picker("Pretend plan", selection: Binding(
+                            get: { subscriptions.developerOverride },
+                            set: { newValue in
+                                // A lapse asks again which vehicle keeps recording.
+                                if newValue == .lapsed { store.recordingVehicleID = nil }
+                                subscriptions.developerOverride = newValue
+                            }
+                        )) {
+                            ForEach(DeveloperPlanOverride.allCases) { option in
+                                Text(option.label).tag(option)
+                            }
+                        }
+                    } header: {
+                        SectionHeaderLabel(title: "Developer", systemImage: "hammer")
+                    } footer: {
+                        Text("Test builds only. The app behaves as if on this plan; your real subscription and the server are unchanged. App Store builds never show this.")
+                            .font(.caption)
+                    }
+                }
+
                 // MARK: Privacy
                 Section {
                     Toggle("Share anonymous usage", isOn: Binding(

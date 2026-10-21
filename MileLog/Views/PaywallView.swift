@@ -18,6 +18,9 @@ struct PaywallView: View {
                     }
                     .subscriptionStoreControlStyle(.prominentPicker)
                     .storeButton(.visible, for: .restorePurchases)
+                    // Inside our NavigationStack Apple's own ✕ doesn't dismiss the sheet;
+                    // the toolbar's Close does.
+                    .storeButton(.hidden, for: .cancellation)
                     .subscriptionStorePolicyDestination(url: AppLinks.privacyPolicy, for: .privacyPolicy)
                     .subscriptionStorePolicyDestination(url: AppLinks.termsOfUse, for: .termsOfService)
                     .inAppPurchaseOptions { _ in
