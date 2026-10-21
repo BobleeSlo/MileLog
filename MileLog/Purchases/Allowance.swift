@@ -22,12 +22,16 @@ enum Allowance {
     nonisolated static let minimumCountedKm = 0.2
 
     nonisolated static func state(trips: [Trip], now: Date, calendar: Calendar = .current, limit: Int) -> AllowanceState {
-        let used = trips.filter {
+        AllowanceState(used: autoTripCount(trips: trips, inMonthOf: now, calendar: calendar), limit: limit)
+    }
+
+    /// Automatic trips that count toward the allowance (and the usage figure) in `date`'s month.
+    nonisolated static func autoTripCount(trips: [Trip], inMonthOf date: Date, calendar: Calendar = .current) -> Int {
+        trips.filter {
             $0.source == .auto
                 && $0.distanceKm >= minimumCountedKm
-                && calendar.isDate($0.startedAt, equalTo: now, toGranularity: .month)
+                && calendar.isDate($0.startedAt, equalTo: date, toGranularity: .month)
         }.count
-        return AllowanceState(used: used, limit: limit)
     }
 
     /// Heads-up points after a saved automatic trip: the limit minus 3, minus 1, and
@@ -47,7 +51,6 @@ enum Allowance {
 
     /// UserDefaults key recording that a notice went out for a month.
     nonisolated static func noticeKey(_ notice: Notice, now: Date, calendar: Calendar = .current) -> String {
-        let c = calendar.dateComponents([.year, .month], from: now)
-        return String(format: "MileLog.allowance.%04d-%02d.%@", c.year ?? 0, c.month ?? 0, notice.rawValue)
+        "MileLog.allowance.\(MonthLocking.monthKey(now, calendar: calendar)).\(notice.rawValue)"
     }
 }

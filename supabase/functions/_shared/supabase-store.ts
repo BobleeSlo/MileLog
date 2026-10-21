@@ -1,6 +1,6 @@
 // EntitlementStore backed by Supabase with the service-role client (Edge Functions only).
 
-import type { EntitlementRow, EntitlementStore } from "./entitlements.ts";
+import { DEFAULT_BUNDLE_ID, DEFAULT_PRODUCT_IDS, type EntitlementRow, type EntitlementStore } from "./entitlements.ts";
 
 // deno-lint-ignore no-explicit-any
 type AdminClient = any;
@@ -36,8 +36,8 @@ export function supabaseEntitlementStore(admin: AdminClient): EntitlementStore {
 
 export function appleConfigFromEnv(env: { get(name: string): string | undefined }) {
   return {
-    bundleId: env.get("APPLE_BUNDLE_ID") ?? "BT1.MileLog",
-    productIds: (env.get("APPLE_PRODUCT_IDS") ?? "BT1.MileLog.paid.monthly,BT1.MileLog.paid.yearly").split(",").map((s) => s.trim()),
+    bundleId: env.get("APPLE_BUNDLE_ID") ?? DEFAULT_BUNDLE_ID,
+    productIds: env.get("APPLE_PRODUCT_IDS")?.split(",").map((s) => s.trim()) ?? DEFAULT_PRODUCT_IDS,
   };
 }
 

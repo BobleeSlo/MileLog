@@ -85,13 +85,14 @@ struct ReportSelectionView: View {
     }
 
     var body: some View {
+        let openItems = openCheckItems
         List {
-            if let month = reportMonth, openCheckItems > 0 {
+            if let month = reportMonth, openItems > 0 {
                 Section {
                     NavigationLink {
                         MonthEndCheckView(month: month)
                     } label: {
-                        Label("\(openCheckItems) items to check before you generate", systemImage: "checklist")
+                        Label("\(openItems) items to check before you generate", systemImage: "checklist")
                             .foregroundStyle(.orange)
                     }
                 }

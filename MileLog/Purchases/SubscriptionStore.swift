@@ -52,15 +52,13 @@ final class SubscriptionStore: ObservableObject {
         userID = newUserID
         cache.lastUserID = newUserID
         guard newUserID != nil else {
-            plan = .free
+            setPlan(.free)
             return
         }
         // KTD6: a subscription bought under a deleted account, or renewed from iOS
         // Settings without a token, can still bind; the server decides.
-        for await result in Transaction.currentEntitlements {
-            if case .verified(let tx) = result, tx.appAccountToken != newUserID, isOurs(tx) {
-                await sendToServer(result.jwsRepresentation)
-            }
+        for (tx, jws) in await ourEntitlements() where tx.appAccountToken != newUserID {
+            await sendToServer(jws)
         }
         await refresh()
     }
@@ -68,18 +66,16 @@ final class SubscriptionStore: ObservableObject {
     /// Recomputes the plan from the server, this device and the cache.
     func refresh() async {
         guard let userID else {
-            plan = .free
+            setPlan(.free)
             return
         }
         let server = try? await supabase?.pullEntitlements()
-        var local: [LocalEntitlement] = []
-        for await result in Transaction.currentEntitlements {
-            guard case .verified(let tx) = result, isOurs(tx), isAcceptedEnvironment(tx) else { continue }
-            local.append(LocalEntitlement(originalTransactionID: String(tx.originalID), appAccountToken: tx.appAccountToken,
-                                          expiresAt: tx.expirationDate, isRevoked: tx.revocationDate != nil))
+        let local = await ourEntitlements().map(\.tx).filter(isAcceptedEnvironment).map {
+            LocalEntitlement(originalTransactionID: String($0.originalID), appAccountToken: $0.appAccountToken,
+                             expiresAt: $0.expirationDate, isRevoked: $0.revocationDate != nil)
         }
         let now = Date()
-        plan = PlanResolver.resolve(server: server, local: local, cache: cache.load(for: userID), userID: userID, now: now)
+        setPlan(PlanResolver.resolve(server: server, local: local, cache: cache.load(for: userID), userID: userID, now: now))
         if server != nil {
             var until: Date?
             if case .paid(let date) = plan { until = date }
@@ -119,8 +115,8 @@ final class SubscriptionStore: ObservableObject {
         } catch {
             lastError = error.localizedDescription
         }
-        for await result in Transaction.currentEntitlements where isOursVerified(result) {
-            await sendToServer(result.jwsRepresentation)
+        for (_, jws) in await ourEntitlements() {
+            await sendToServer(jws)
         }
         await refresh()
     }
@@ -138,19 +134,27 @@ final class SubscriptionStore: ObservableObject {
         do {
             try await supabase?.verifyPurchase(signedTransaction: jws)
         } catch {
-            // Not fatal: the device transaction still counts until the server catches up,
+            // Ignored: the device transaction still counts until the server catches up,
             // and apple-notifications updates the row independently.
-            lastError = nil
         }
+    }
+
+    /// Assigns only on change, so observers don't re-render for an unchanged plan.
+    private func setPlan(_ new: PlanStatus) {
+        if plan != new { plan = new }
+    }
+
+    /// Verified current entitlements for MileLog's subscriptions, with their signed form.
+    private func ourEntitlements() async -> [(tx: Transaction, jws: String)] {
+        var out: [(tx: Transaction, jws: String)] = []
+        for await result in Transaction.currentEntitlements {
+            if case .verified(let tx) = result, isOurs(tx) { out.append((tx, result.jwsRepresentation)) }
+        }
+        return out
     }
 
     private func isOurs(_ tx: Transaction) -> Bool {
         Self.productIDs.contains(tx.productID)
-    }
-
-    private func isOursVerified(_ result: VerificationResult<Transaction>) -> Bool {
-        if case .verified(let tx) = result { return isOurs(tx) }
-        return false
     }
 
     /// App Store builds only trust production transactions; TestFlight and debug

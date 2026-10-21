@@ -78,8 +78,10 @@ struct RootTabView: View {
             }
         }
         // Month-end reminder follows the plan and the current month's open items.
-        .task(id: ReminderInputs(isPaid: subscriptions.plan.isPaid, openItems: currentMonthOpenItems)) {
-            await notifications.scheduleMonthEndReminder(isPaid: subscriptions.plan.isPaid, openItems: currentMonthOpenItems)
+        // Keyed on cheap values: the check itself runs only in the task, and only for Paid users.
+        .task(id: ReminderInputs(isPaid: subscriptions.plan.isPaid, tripsCount: store.trips.count)) {
+            let isPaid = subscriptions.plan.isPaid
+            await notifications.scheduleMonthEndReminder(isPaid: isPaid, openItems: isPaid ? currentMonthOpenItems : 0)
         }
         .task(id: subscriptions.plan) {
             guard !askedRecordingChoice, store.needsRecordingVehicleChoice(isPaid: subscriptions.plan.isPaid) else { return }
@@ -103,7 +105,7 @@ extension RootTabView {
 
 private struct ReminderInputs: Equatable {
     var isPaid: Bool
-    var openItems: Int
+    var tripsCount: Int
 }
 
 private struct RoutedMonth: Identifiable {

@@ -73,6 +73,10 @@ struct DeleteAccountView: View {
         }
     }
 
+    private var offlineMessage: String {
+        String(localized: "You're offline. Connect to the internet to delete your account — nothing was changed.", bundle: .app)
+    }
+
     private func delete() async {
         isDeleting = true
         errorText = nil
@@ -80,7 +84,7 @@ struct DeleteAccountView: View {
         do {
             try await supabase.reauthenticate(password: password)
         } catch let error as URLError where error.code == .notConnectedToInternet {
-            errorText = String(localized: "You're offline. Connect to the internet to delete your account — nothing was changed.", bundle: .app)
+            errorText = offlineMessage
             return
         } catch {
             errorText = String(localized: "That password isn't right.", bundle: .app)
@@ -89,7 +93,7 @@ struct DeleteAccountView: View {
         do {
             try await supabase.deleteAccount()
         } catch SupabaseService.DeleteAccountError.offline {
-            errorText = String(localized: "You're offline. Connect to the internet to delete your account — nothing was changed.", bundle: .app)
+            errorText = offlineMessage
             return
         } catch {
             errorText = String(localized: "The account couldn't be deleted. Your data is still here — try again.", bundle: .app)

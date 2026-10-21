@@ -90,14 +90,7 @@ final class Store: ObservableObject {
             trips += cloudTrips.filter {
                 !localIDs.contains($0.id) && $0.id != activeID && !deletedTripIDs.contains($0.id)
             }
-            // Locks only tighten: a trip locked on another device is locked here too.
-            let cloudLocked = Dictionary(cloudTrips.filter(\.isLocked).map { ($0.id, $0.lockedAt) }, uniquingKeysWith: { a, _ in a })
-            for i in trips.indices where !trips[i].isLocked {
-                if let lockedAt = cloudLocked[trips[i].id] {
-                    trips[i].isLocked = true
-                    trips[i].lockedAt = lockedAt ?? Date()
-                }
-            }
+            adoptCloudLocks(from: cloudTrips)
             tripsSyncFailed = false
         } else {
             tripsSyncFailed = true
@@ -349,8 +342,8 @@ final class Store: ObservableObject {
               MonthLocking.monthHasEnded(date, now: now, calendar: calendar) else { return }
         let key = MonthLocking.monthKey(date, calendar: calendar)
         let existing = Set(closedMonths.map(\.key))
-        let new = vehicleIDs
-            .filter { id in trips.contains { $0.vehicleID == id && MonthLocking.monthKey($0.startedAt, calendar: calendar) == key } }
+        let driven = Set(trips.filter { calendar.isDate($0.startedAt, equalTo: date, toGranularity: .month) }.map(\.vehicleID))
+        let new = vehicleIDs.intersection(driven)
             .map { ClosedMonth(vehicleID: $0, month: key, reportKind: reportKind, closedAt: now) }
             .filter { !existing.contains($0.key) }
         guard !new.isEmpty else { return }
@@ -367,12 +360,26 @@ final class Store: ObservableObject {
         guard let supabase, !isFlushingClosedMonths else { return }
         isFlushingClosedMonths = true
         defer { isFlushingClosedMonths = false }
+        var pushed = Set<ClosedMonthKey>()
         for closure in pendingClosedMonths {
             do {
                 try await supabase.pushClosedMonth(closure)
-                pendingClosedMonths.removeAll { $0.key == closure.key }
+                pushed.insert(closure.key)
             } catch {
                 break // offline: retried at the next sync
+            }
+        }
+        // Re-read: a closure may have been queued during the awaits above.
+        if !pushed.isEmpty { pendingClosedMonths.removeAll { pushed.contains($0.key) } }
+    }
+
+    /// Locks only tighten: a trip locked on another device is locked here too.
+    private func adoptCloudLocks(from cloudTrips: [Trip]) {
+        let cloudLocked = Dictionary(cloudTrips.filter(\.isLocked).map { ($0.id, $0.lockedAt) }, uniquingKeysWith: { a, _ in a })
+        for i in trips.indices where !trips[i].isLocked {
+            if let lockedAt = cloudLocked[trips[i].id] {
+                trips[i].isLocked = true
+                trips[i].lockedAt = lockedAt ?? Date()
             }
         }
     }
@@ -1117,14 +1124,7 @@ final class Store: ObservableObject {
             trips += cloudTrips.filter {
                 !localIDs.contains($0.id) && $0.id != activeID && !deletedTripIDs.contains($0.id)
             }
-            // Locks only tighten: a trip locked on another device is locked here too.
-            let cloudLocked = Dictionary(cloudTrips.filter(\.isLocked).map { ($0.id, $0.lockedAt) }, uniquingKeysWith: { a, _ in a })
-            for i in trips.indices where !trips[i].isLocked {
-                if let lockedAt = cloudLocked[trips[i].id] {
-                    trips[i].isLocked = true
-                    trips[i].lockedAt = lockedAt ?? Date()
-                }
-            }
+            adoptCloudLocks(from: cloudTrips)
             tripsSyncFailed = false
         } else {
             tripsSyncFailed = true

@@ -9,6 +9,9 @@
 // The lock trigger (trip_lock_guard) is BEFORE UPDATE only, so deleting locked
 // trips needs no bypass.
 
+import { base64UrlDecode } from "./apple-jws.ts";
+import type { Result } from "./entitlements.ts";
+
 export const REAUTH_WINDOW_SECONDS = 10 * 60;
 
 /** Tables holding the user's rows, children before parents. */
@@ -29,11 +32,6 @@ export interface DeletionOps {
   deleteAuthUser(userId: string): Promise<void>;
 }
 
-export interface Result {
-  httpStatus: number;
-  body: Record<string, unknown>;
-}
-
 interface Claims {
   sub?: string;
   amr?: { method: string; timestamp: number }[];
@@ -47,9 +45,7 @@ export function passwordAgeSeconds(claims: Claims, nowSeconds: number): number |
 }
 
 export function decodeClaims(jwt: string): Claims {
-  const part = jwt.split(".")[1] ?? "";
-  const b64 = part.replace(/-/g, "+").replace(/_/g, "/");
-  return JSON.parse(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4)));
+  return JSON.parse(new TextDecoder().decode(base64UrlDecode(jwt.split(".")[1] ?? "")));
 }
 
 /**

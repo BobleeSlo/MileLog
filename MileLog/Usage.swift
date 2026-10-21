@@ -51,14 +51,18 @@ final class Usage: ObservableObject {
 
         let counts = Dictionary(uniqueKeysWithValues: Metric.allCases.map { ($0, defaults.integer(forKey: Self.countKey($0, month: month))) })
         let submissions = Self.submissions(month: lastMonth, now: now, trips: trips, counts: counts, calendar: calendar)
-        do {
-            for s in submissions {
+        // Marked per metric, so a retry after a partial failure never counts one twice.
+        for s in submissions {
+            let metricSentKey = "\(sentKey).\(s.metric.rawValue)"
+            guard !defaults.bool(forKey: metricSentKey) else { continue }
+            do {
                 try await supabase.recordUsage(month: month + "-01", metric: s.metric.rawValue, bucket: s.bucket)
+                defaults.set(true, forKey: metricSentKey)
+            } catch {
+                return // offline: tried again at the next launch while the month is still accepted
             }
-            defaults.set(true, forKey: sentKey)
-        } catch {
-            // Offline: tried again at the next launch while the month is still accepted.
         }
+        defaults.set(true, forKey: sentKey)
     }
 
     // MARK: - Pure rules
@@ -84,10 +88,7 @@ final class Usage: ObservableObject {
     nonisolated static func submissions(month: Date, now: Date, trips: [Trip], counts: [Metric: Int],
                                         calendar: Calendar = .current) -> [(metric: Metric, bucket: String)] {
         guard MonthLocking.monthHasEnded(month, now: now, calendar: calendar) else { return [] }
-        let autoTrips = trips.filter {
-            $0.source == .auto && $0.distanceKm >= Allowance.minimumCountedKm
-                && calendar.isDate($0.startedAt, equalTo: month, toGranularity: .month)
-        }.count
+        let autoTrips = Allowance.autoTripCount(trips: trips, inMonthOf: month, calendar: calendar)
         return Metric.allCases.map { metric in
             (metric, bucket(metric == .autoTrips ? autoTrips : counts[metric] ?? 0))
         }

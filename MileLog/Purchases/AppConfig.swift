@@ -28,7 +28,7 @@ final class AppConfig: ObservableObject {
     }
 
     func apply(limit: Int, fetchedAt: Date) {
-        freeAutoTripsPerMonth = limit
+        if freeAutoTripsPerMonth != limit { freeAutoTripsPerMonth = limit }
         defaults.set(limit, forKey: Self.limitKey)
         defaults.set(fetchedAt, forKey: Self.fetchedKey)
     }

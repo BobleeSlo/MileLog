@@ -68,6 +68,7 @@ export interface Result {
   body: Record<string, unknown>;
 }
 
+export const DEFAULT_BUNDLE_ID = "BT1.MileLog";
 export const DEFAULT_PRODUCT_IDS = ["BT1.MileLog.paid.monthly", "BT1.MileLog.paid.yearly"];
 export const MAX_NOTIFICATION_BYTES = 64 * 1024;
 
