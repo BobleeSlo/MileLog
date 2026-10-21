@@ -131,6 +131,21 @@ struct Vehicle: Identifiable, Codable, Hashable {
 
 // MARK: - Trip (one logbook entry)
 
+/// How a trip was started. Fixed when the trip is created and never edited by
+/// the user; the free plan's monthly allowance counts only `auto` trips.
+enum TripSource: String, Codable, Hashable {
+    case auto, manual
+
+    /// Marker the detector writes into a new trip's notes. Trips stored before
+    /// `source` existed are classified by it — the same rule the database
+    /// backfill and insert trigger use (notes contain the literal marker).
+    nonisolated static let autoNoteMarker = "Auto-detected"
+
+    nonisolated static func derived(fromNotes notes: String) -> TripSource {
+        notes.contains(autoNoteMarker) ? .auto : .manual
+    }
+}
+
 struct Trip: Identifiable, Codable, Hashable {
     var id: UUID = UUID()
     var vehicleID: UUID
@@ -167,11 +182,15 @@ struct Trip: Identifiable, Codable, Hashable {
     /// human has looked at a trip, it's done; further driving becomes a new
     /// trip rather than continuing to accumulate onto a reviewed one.
     var reviewedAt: Date? = nil
+    /// Set once when the trip is created; merges keep the first trip's value
+    /// and `Store.updateTrip` never copies it from an edited snapshot.
+    var source: TripSource = .manual
 
     init(id: UUID = UUID(), vehicleID: UUID, type: TripType, purpose: String, customerName: String,
         startedAt: Date, endedAt: Date, startAddress: String, endAddress: String,
         startLat: Double? = nil, startLng: Double? = nil, endLat: Double? = nil, endLng: Double? = nil,
-        distanceKm: Double, notes: String, isLocked: Bool, lockedAt: Date? = nil, reviewedAt: Date? = nil) {
+        distanceKm: Double, notes: String, isLocked: Bool, lockedAt: Date? = nil, reviewedAt: Date? = nil,
+        source: TripSource = .manual) {
         self.id = id
         self.vehicleID = vehicleID
         self.type = type
@@ -190,12 +209,13 @@ struct Trip: Identifiable, Codable, Hashable {
         self.isLocked = isLocked
         self.lockedAt = lockedAt
         self.reviewedAt = reviewedAt
+        self.source = source
     }
 
     enum CodingKeys: String, CodingKey {
         case id, vehicleID, type, purpose, customerName, startedAt, endedAt
         case startAddress, endAddress, startLat, startLng, endLat, endLng
-        case distanceKm, notes, isLocked, lockedAt, reviewedAt
+        case distanceKm, notes, isLocked, lockedAt, reviewedAt, source
     }
 
     /// This is the most consequential model in the app — every reimbursement
@@ -227,6 +247,10 @@ struct Trip: Identifiable, Codable, Hashable {
         isLocked = try c.decode(Bool.self, forKey: .isLocked)
         lockedAt = try c.decodeIfPresent(Date.self, forKey: .lockedAt)
         reviewedAt = try c.decodeIfPresent(Date.self, forKey: .reviewedAt)
+        // Missing (stored before this field) or a value from a newer build:
+        // fall back to the notes rule rather than failing the whole decode.
+        let rawSource = try c.decodeIfPresent(String.self, forKey: .source)
+        source = rawSource.flatMap(TripSource.init(rawValue:)) ?? .derived(fromNotes: notes)
     }
 
     /// Reimbursement uses different rates per trip type. Private trips never reimburse.

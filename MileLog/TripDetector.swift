@@ -33,11 +33,14 @@ struct ActiveTripState: Codable {
     /// Most recent GPS speed in km/h — logged for diagnostics only.
     var lastSpeedKmh: Double = 0
     var points: [RecordedPoint] = []
+    /// Source of a saved trip this one resumed (a brief-stop merge can reclaim
+    /// a manually recorded trip); nil for a fresh detection, which is `auto`.
+    var resumedSource: TripSource? = nil
 
     init(id: UUID, vehicleID: UUID, audioDeviceUID: String? = nil, audioDeviceName: String? = nil,
         startedAt: Date, startLat: Double, startLng: Double, lastLat: Double, lastLng: Double,
         distanceKm: Double, lastMovementAt: Date, lastSpeedKmh: Double = 0,
-        points: [RecordedPoint] = []) {
+        points: [RecordedPoint] = [], resumedSource: TripSource? = nil) {
         self.id = id
         self.vehicleID = vehicleID
         self.audioDeviceUID = audioDeviceUID
@@ -51,12 +54,13 @@ struct ActiveTripState: Codable {
         self.lastMovementAt = lastMovementAt
         self.lastSpeedKmh = lastSpeedKmh
         self.points = points
+        self.resumedSource = resumedSource
     }
 
     enum CodingKeys: String, CodingKey {
         case id, vehicleID, audioDeviceUID, audioDeviceName, startedAt
         case startLat, startLng, lastLat, lastLng, distanceKm, lastMovementAt
-        case lastSpeedKmh, points
+        case lastSpeedKmh, points, resumedSource
     }
 
     init(from decoder: Decoder) throws {
@@ -74,6 +78,7 @@ struct ActiveTripState: Codable {
         lastMovementAt = try c.decode(Date.self, forKey: .lastMovementAt)
         lastSpeedKmh = try c.decodeIfPresent(Double.self, forKey: .lastSpeedKmh) ?? 0
         points = try c.decodeIfPresent([RecordedPoint].self, forKey: .points) ?? []
+        resumedSource = try? c.decodeIfPresent(TripSource.self, forKey: .resumedSource)
     }
 }
 
@@ -1207,7 +1212,8 @@ final class TripDetector: NSObject, ObservableObject {
                 lng: location.coordinate.longitude,
                 speedKmh: Float(max(0, location.speed) * 3.6),
                 accuracyM: Float(location.horizontalAccuracy)
-            )]
+            )],
+            resumedSource: lastTrip.source                          // merge keeps the first trip's source
         )
         activeTrip = resumed
         persistActiveTrip(force: true)
@@ -1606,8 +1612,9 @@ final class TripDetector: NSObject, ObservableObject {
             startAddress: "",
             endAddress: "",
             distanceKm: state.distanceKm,
-            notes: "Auto-detected",
-            isLocked: false
+            notes: TripSource.autoNoteMarker,
+            isLocked: false,
+            source: state.resumedSource ?? .auto
         )
         trip.startLat = state.startLat
         trip.startLng = state.startLng

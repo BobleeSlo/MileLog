@@ -100,4 +100,63 @@ final class MileLogTests: XCTestCase {
         XCTAssertEqual(available.count, Set(available).count)
         XCTAssertEqual(Set(available), ["en", "sl"])
     }
+
+    // MARK: - Trip source
+
+    private func storedTripJSON(notes: String, source: String? = nil) throws -> Data {
+        var trip = Trip(vehicleID: UUID(), type: .business, purpose: "", customerName: "",
+                        startedAt: Date(timeIntervalSince1970: 0), endedAt: Date(timeIntervalSince1970: 60),
+                        startAddress: "", endAddress: "", distanceKm: 1, notes: notes, isLocked: false)
+        trip.source = .manual
+        var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(trip)) as! [String: Any]
+        object["source"] = source
+        return try JSONSerialization.data(withJSONObject: object)
+    }
+
+    func testStoredTripWithoutSourceFollowsNotes() throws {
+        let auto = try JSONDecoder().decode(Trip.self, from: storedTripJSON(notes: "Auto-detected"))
+        XCTAssertEqual(auto.source, .auto)
+        let manual = try JSONDecoder().decode(Trip.self, from: storedTripJSON(notes: ""))
+        XCTAssertEqual(manual.source, .manual)
+    }
+
+    func testStoredSourceWinsOverNotes() throws {
+        let trip = try JSONDecoder().decode(Trip.self, from: storedTripJSON(notes: "", source: "auto"))
+        XCTAssertEqual(trip.source, .auto)
+        let future = try JSONDecoder().decode(Trip.self, from: storedTripJSON(notes: "", source: "imported"))
+        XCTAssertEqual(future.source, .manual)
+    }
+
+    /// Same samples as the SQL rule in 20261021100000_add_trip_source.sql:
+    /// position('Auto-detected' in notes) > 0.
+    func testNotesRuleMatchesTheDatabase() {
+        XCTAssertEqual(TripSource.derived(fromNotes: "Auto-detected"), .auto)
+        XCTAssertEqual(TripSource.derived(fromNotes: "Auto-detected\nAuto-detected"), .auto)
+        XCTAssertEqual(TripSource.derived(fromNotes: "Client visit\nAuto-detected"), .auto)
+        XCTAssertEqual(TripSource.derived(fromNotes: "auto-detected"), .manual)
+        XCTAssertEqual(TripSource.derived(fromNotes: "Client visit"), .manual)
+        XCTAssertEqual(TripSource.derived(fromNotes: ""), .manual)
+    }
+
+    func testSyncCarriesSource() {
+        var trip = Trip(vehicleID: UUID(), type: .business, purpose: "", customerName: "",
+                        startedAt: Date(), endedAt: Date(), startAddress: "", endAddress: "",
+                        distanceKm: 1, notes: "", isLocked: false, source: .auto)
+        let dto = TripDTO(from: trip, userId: UUID())
+        XCTAssertEqual(dto.source, "auto")
+        XCTAssertEqual(dto.toTrip().source, .auto)
+        // A row from an older build has no source: the notes decide.
+        trip.notes = "Auto-detected"
+        var old = TripDTO(from: trip, userId: UUID())
+        old.source = nil
+        XCTAssertEqual(old.toTrip().source, .auto)
+    }
+
+    func testResumedTripKeepsItsSource() throws {
+        let state = ActiveTripState(id: UUID(), vehicleID: UUID(), startedAt: Date(), startLat: 0, startLng: 0,
+                                    lastLat: 0, lastLng: 0, distanceKm: 0, lastMovementAt: Date(),
+                                    resumedSource: .manual)
+        let decoded = try JSONDecoder().decode(ActiveTripState.self, from: JSONEncoder().encode(state))
+        XCTAssertEqual(decoded.resumedSource, .manual)
+    }
 }

@@ -76,6 +76,8 @@ struct TripDTO: Codable {
     /// cloud sync was involved, since a synced trip decoded back to
     /// reviewedAt == nil regardless of what was set locally.
     var reviewed_at: Date?
+    /// "auto" or "manual"; nil only on rows written by builds before it existed.
+    var source: String?
 
     init(from t: Trip, userId: UUID) {
         id = t.id
@@ -97,6 +99,7 @@ struct TripDTO: Codable {
         is_locked = t.isLocked
         locked_at = t.lockedAt
         reviewed_at = t.reviewedAt
+        source = t.source.rawValue
     }
 
     func toTrip() -> Trip {
@@ -120,6 +123,7 @@ struct TripDTO: Codable {
         trip.endLng = end_lng
         trip.lockedAt = locked_at
         trip.reviewedAt = reviewed_at
+        trip.source = source.flatMap(TripSource.init(rawValue:)) ?? .derived(fromNotes: trip.notes)
         return trip
     }
 }

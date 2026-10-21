@@ -503,7 +503,8 @@ struct RecordTripView: View {
             endAddress: endAddress,
             distanceKm: distanceKm,
             notes: "",
-            isLocked: false
+            isLocked: false,
+            source: .manual
         )
         trip.startLat = startLocation?.coordinate.latitude
         trip.startLng = startLocation?.coordinate.longitude
