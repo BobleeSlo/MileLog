@@ -1,6 +1,7 @@
 import SwiftUI
 import CoreLocation
 import UIKit
+import StoreKit
 
 struct SettingsView: View {
     @EnvironmentObject var store: Store
@@ -9,6 +10,10 @@ struct SettingsView: View {
     @EnvironmentObject var location: LocationManager
     @EnvironmentObject var appLock: AppLock
     @EnvironmentObject var language: AppLanguage
+    @EnvironmentObject var subscriptions: SubscriptionStore
+    @State private var showingPaywall = false
+    @State private var showingManageSubscription = false
+    @State private var isRestoring = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var exportURL: URL?
     @State private var lockResultMessage: String?
@@ -28,6 +33,14 @@ struct SettingsView: View {
     @State private var logbookMonth: Int = Calendar.current.component(.month, from: Date())
 
     private enum Field: Hashable { case rate, commuteRate, home, work }
+
+    private var planName: String {
+        switch subscriptions.plan {
+        case .paid: String(localized: "Paid", bundle: .app)
+        case .free: String(localized: "Free", bundle: .app)
+        case .freeOtherAccount: String(localized: "Free — subscription on another account", bundle: .app)
+        }
+    }
     @FocusState private var focusedField: Field?
 
     var body: some View {
@@ -376,6 +389,48 @@ struct SettingsView: View {
                         .font(.caption)
                 }
 
+                // MARK: Plan
+                Section {
+                    LabeledContent("Current plan", value: planName)
+                    if case .paid(let until?) = subscriptions.plan {
+                        LabeledContent("Renews or ends", value: until.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted).locale(Format.locale)))
+                    }
+                    if subscriptions.plan.isPaid {
+                        Button {
+                            showingManageSubscription = true
+                        } label: {
+                            Label("Manage subscription", systemImage: "creditcard")
+                        }
+                    } else {
+                        Button {
+                            showingPaywall = true
+                        } label: {
+                            Label("See what Paid adds", systemImage: "star")
+                        }
+                    }
+                    Button {
+                        isRestoring = true
+                        Task {
+                            await subscriptions.restore()
+                            isRestoring = false
+                        }
+                    } label: {
+                        HStack {
+                            Label("Restore purchases", systemImage: "arrow.clockwise")
+                            if isRestoring { Spacer(); ProgressView() }
+                        }
+                    }
+                    .disabled(isRestoring)
+                } header: {
+                    SectionHeaderLabel(title: "Plan", systemImage: "star.circle")
+                } footer: {
+                    HStack(spacing: 16) {
+                        Link("Privacy policy", destination: AppLinks.privacyPolicy)
+                        Link("Terms of use", destination: AppLinks.termsOfUse)
+                    }
+                    .font(.caption)
+                }
+
                 // MARK: Account
                 Section {
                     LabeledContent("Signed in as", value: supabase.userEmail ?? "—")
@@ -409,6 +464,8 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .keyboardDoneToolbar()
+            .sheet(isPresented: $showingPaywall) { PaywallView() }
+            .manageSubscriptionsSheet(isPresented: $showingManageSubscription)
             .onAppear {
                 refreshExport()
                 // With a single company car there's nothing to choose — the

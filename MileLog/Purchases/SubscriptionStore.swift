@@ -19,7 +19,8 @@ final class SubscriptionStore: ObservableObject {
     @Published private(set) var lastError: String?
 
     private weak var supabase: SupabaseService?
-    private var userID: UUID?
+    /// The signed-in account; purchases carry it as `appAccountToken`.
+    private(set) var userID: UUID?
     private var updatesTask: Task<Void, Never>?
     private let cache: PlanCache
 
@@ -88,6 +89,18 @@ final class SubscriptionStore: ObservableObject {
                 await handle(verification)
             }
         } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    /// Completion of a purchase made through `SubscriptionStoreView`.
+    func purchaseCompleted(_ result: Result<Product.PurchaseResult, any Error>) async {
+        switch result {
+        case .success(.success(let verification)):
+            await handle(verification)
+        case .success:
+            break // cancelled or pending (Ask to Buy)
+        case .failure(let error):
             lastError = error.localizedDescription
         }
     }
