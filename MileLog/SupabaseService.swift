@@ -9,6 +9,8 @@ final class SupabaseService: ObservableObject {
 
     @Published private(set) var isAuthenticated = false
     @Published private(set) var userEmail: String?
+    /// Signed-in account id; also the `appAccountToken` on every purchase.
+    @Published private(set) var userID: UUID?
     @Published private(set) var isWorking = false
     /// Set when a sign-up confirmation link fails (expired or already used),
     /// so the sign-in screen offers to send a new one.
@@ -79,10 +81,12 @@ final class SupabaseService: ObservableObject {
             guard generation == authGeneration else { return }
             isAuthenticated = true
             userEmail = session.user.email
+            userID = session.user.id
         } catch {
             guard generation == authGeneration else { return }
             isAuthenticated = false
             userEmail = nil
+            userID = nil
         }
         didResolveInitialAuth = true
     }
@@ -330,6 +334,23 @@ final class SupabaseService: ObservableObject {
             _ = try? await client.storage.from("receipts")
                 .remove(paths: [receipt.photoPath])
         }
+    }
+
+    // MARK: - Plans
+
+    /// The account's entitlement rows (RLS returns only its own).
+    func pullEntitlements() async throws -> [ServerEntitlement] {
+        try await client.from("entitlements")
+            .select("source,original_transaction_id,status,expires_at")
+            .execute().value
+    }
+
+    /// Sends a signed StoreKit transaction to the `verify-purchase` Edge Function.
+    func verifyPurchase(signedTransaction: String) async throws {
+        try await client.functions.invoke(
+            "verify-purchase",
+            options: FunctionInvokeOptions(body: ["signedTransaction": signedTransaction])
+        )
     }
 
     // MARK: - Helpers

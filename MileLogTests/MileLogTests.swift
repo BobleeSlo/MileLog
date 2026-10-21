@@ -159,4 +159,75 @@ final class MileLogTests: XCTestCase {
         let decoded = try JSONDecoder().decode(ActiveTripState.self, from: JSONEncoder().encode(state))
         XCTAssertEqual(decoded.resumedSource, .manual)
     }
+
+    // MARK: - Plan status
+
+    private let me = UUID()
+    private let now = Date(timeIntervalSince1970: 1_792_000_000)
+
+    private func row(_ status: String, expires: TimeInterval? = 86_400, id: String? = "1000", source: String = "apple") -> ServerEntitlement {
+        ServerEntitlement(source: source, originalTransactionID: id, status: status, expiresAt: expires.map { now.addingTimeInterval($0) })
+    }
+
+    func testServerRowGivesPaidWithoutLocalTransactions() {
+        // AE5: new iPhone or reinstall.
+        XCTAssertTrue(PlanResolver.resolve(server: [row("active")], local: [], cache: nil, userID: me, now: now).isPaid)
+    }
+
+    func testComplimentaryRowGivesPaid() {
+        let grant = row("active", expires: 365 * 86_400, id: nil, source: "complimentary")
+        XCTAssertTrue(PlanResolver.resolve(server: [grant], local: [], cache: nil, userID: me, now: now).isPaid)
+        let ended = row("active", expires: -60, id: nil, source: "complimentary")
+        XCTAssertEqual(PlanResolver.resolve(server: [ended], local: [], cache: nil, userID: me, now: now), .free)
+    }
+
+    func testLocalTransactionWithMyTokenGivesPaid() {
+        let local = LocalEntitlement(originalTransactionID: "1000", appAccountToken: me, expiresAt: now.addingTimeInterval(3600), isRevoked: false)
+        XCTAssertTrue(PlanResolver.resolve(server: [], local: [local], cache: nil, userID: me, now: now).isPaid)
+    }
+
+    func testAnotherAccountsTransactionGivesFreeWithReason() {
+        // AE8
+        let local = LocalEntitlement(originalTransactionID: "1000", appAccountToken: UUID(), expiresAt: now.addingTimeInterval(3600), isRevoked: false)
+        XCTAssertEqual(PlanResolver.resolve(server: [], local: [local], cache: nil, userID: me, now: now), .freeOtherAccount)
+        // An active row on the server still wins.
+        XCTAssertTrue(PlanResolver.resolve(server: [row("active")], local: [local], cache: nil, userID: me, now: now).isPaid)
+    }
+
+    func testCacheIsHonouredOfflineUntilItsLimit() {
+        let cache = CachedPlan(userID: me, isPaid: true, expiresAt: now.addingTimeInterval(30 * 86_400), checkedAt: now.addingTimeInterval(-86_400))
+        XCTAssertTrue(PlanResolver.resolve(server: nil, local: [], cache: cache, userID: me, now: now).isPaid)
+        // Seven days after the last check, even before the expiry.
+        let old = CachedPlan(userID: me, isPaid: true, expiresAt: now.addingTimeInterval(30 * 86_400), checkedAt: now.addingTimeInterval(-8 * 86_400))
+        XCTAssertEqual(PlanResolver.resolve(server: nil, local: [], cache: old, userID: me, now: now), .free)
+        let expired = CachedPlan(userID: me, isPaid: true, expiresAt: now.addingTimeInterval(-60), checkedAt: now)
+        XCTAssertEqual(PlanResolver.resolve(server: nil, local: [], cache: expired, userID: me, now: now), .free)
+        // Another account's cache never applies.
+        XCTAssertEqual(PlanResolver.resolve(server: nil, local: [], cache: cache, userID: UUID(), now: now), .free)
+    }
+
+    func testRevokedRowGivesFreeEvenWithCacheAndDevice() {
+        let cache = CachedPlan(userID: me, isPaid: true, expiresAt: nil, checkedAt: now)
+        let local = LocalEntitlement(originalTransactionID: "1000", appAccountToken: me, expiresAt: now.addingTimeInterval(3600), isRevoked: false)
+        XCTAssertEqual(PlanResolver.resolve(server: [row("revoked")], local: [local], cache: cache, userID: me, now: now), .free)
+    }
+
+    func testBillingRetryIsFreeAndGraceIsPaid() {
+        XCTAssertEqual(PlanResolver.resolve(server: [row("billing_retry")], local: [], cache: nil, userID: me, now: now), .free)
+        XCTAssertTrue(PlanResolver.resolve(server: [row("grace")], local: [], cache: nil, userID: me, now: now).isPaid)
+    }
+
+    @MainActor
+    func testSwitchingAccountClearsThePreviousAccountsCache() async {
+        let defaults = UserDefaults(suiteName: "MileLogTests.plan")!
+        defaults.removePersistentDomain(forName: "MileLogTests.plan")
+        let cache = PlanCache(defaults: defaults)
+        cache.save(CachedPlan(userID: me, isPaid: true, expiresAt: nil, checkedAt: now))
+        let store = SubscriptionStore(defaults: defaults)
+        await store.accountChanged(to: me)
+        await store.accountChanged(to: nil)
+        XCTAssertNil(cache.load(for: me))
+        let plan = store.plan
+        XCTAssertEqual(plan, .free)
+    }
 }
