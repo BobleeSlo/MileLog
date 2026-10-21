@@ -127,7 +127,7 @@ final class MileLogTests: XCTestCase {
         XCTAssertEqual(future.source, .manual)
     }
 
-    /// Same samples as the SQL rule in 20261021100000_add_trip_source.sql:
+    /// Same samples as the SQL rule in 20261021203109_add_trip_source.sql:
     /// position('Auto-detected' in notes) > 0.
     func testNotesRuleMatchesTheDatabase() {
         XCTAssertEqual(TripSource.derived(fromNotes: "Auto-detected"), .auto)
