@@ -1,8 +1,8 @@
 # MileLog Terms of Use
 
-Last updated: TODO (date of publication)
+Last updated: 20 November 2026
 
-These terms apply to the MileLog iOS app ("the app"), provided by TODO: full legal name / business name, TODO: address, Slovenia ("we"). By using the app you agree to these terms. They supplement Apple's Licensed Application End User License Agreement (the "Apple EULA", https://www.apple.com/legal/internet-services/itunes/dev/stdeula/). Where these terms and the Apple EULA conflict, these terms apply to the extent the Apple EULA allows.
+These terms apply to the MileLog iOS app ("the app"), provided by Robert Lipič, Potrčeva ulica 4, 2000 Maribor, Slovenia ("we"). By using the app you agree to these terms. They supplement Apple's Licensed Application End User License Agreement (the "Apple EULA", https://www.apple.com/legal/internet-services/itunes/dev/stdeula/). Where these terms and the Apple EULA conflict, these terms apply to the extent the Apple EULA allows.
 
 ## 1. Licence
 
@@ -63,4 +63,4 @@ These terms are between you and us, not Apple. Apple is not responsible for the 
 
 ## 13. Contact
 
-TODO: contact email
+support@milelog.net

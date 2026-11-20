@@ -1,6 +1,6 @@
 # MileLog Privacy Policy
 
-Last updated: TODO (date of publication)
+Last updated: 20 November 2026
 
 This policy explains what personal data the MileLog iOS app collects, why, where it is kept and what rights you have. MileLog is made by one developer in Slovenia (EU), so the EU General Data Protection Regulation (GDPR) applies.
 
@@ -8,9 +8,9 @@ This policy explains what personal data the MileLog iOS app collects, why, where
 
 The controller of your personal data is:
 
-- TODO: full legal name (or business name, e.g. s.p.)
-- TODO: postal address, Slovenia
-- TODO: contact email for privacy requests
+- Robert Lipič
+- Potrčeva ulica 4, 2000 Maribor, Slovenia
+- support@milelog.net
 
 There is no data protection officer; write to the email above with any question or request.
 
@@ -60,12 +60,12 @@ MileLog asks once whether you want to share anonymous usage figures. If you agre
 
 We do not share your data with anyone else, except where the law requires it.
 
-If a provider processes data outside the EU/EEA (for example for support or security), this is covered by the EU Standard Contractual Clauses or an adequacy decision. TODO: check the Supabase DPA and sub-processor list and keep this sentence accurate.
+If a provider processes data outside the EU/EEA (for example for support or security), this is covered by the EU Standard Contractual Clauses or an adequacy decision.
 
 ## 4. How long we keep data
 
 - Account, trips, vehicles, receipts, settings, change history and subscription records: for as long as your account exists. You can delete individual trips, vehicles and receipts at any time. Note that Slovenian tax rules may require you to keep your own copy of mileage records for several years; export your reports before deleting.
-- When you delete your account, all of the above is deleted from our database and storage straight away. Database backups held by Supabase are overwritten within TODO days (confirm Supabase backup retention for the plan used).
+- When you delete your account, all of the above is deleted from our database and storage straight away. Database backups held by Supabase are overwritten within 7 days.
 - Usage counters are aggregate and do not identify anyone; they are kept as long as they are useful.
 - Apple keeps its own records of your purchases under its own policy.
 
@@ -106,4 +106,4 @@ If this policy changes, we will update the date at the top and, for significant 
 
 ## 10. Contact
 
-TODO: contact email
+support@milelog.net
