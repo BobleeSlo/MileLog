@@ -4,10 +4,10 @@ Paste the "Notes" section below into App Store Connect > App Review Information 
 
 ## Sign-in information
 
-- Username: TODO (demo account email, e.g. a dedicated review account)
-- Password: TODO (set in App Store Connect only, not in this file)
-- The demo account should contain at least one vehicle and a few sample trips (business, commute, private) in the current and previous month, with one receipt, so reports can be generated straight away. TODO: seed the demo account before submission.
-- TODO: decide whether the demo account has a complimentary Paid entitlement or stays on Free (so the reviewer can test the purchase in sandbox). Recommended: keep it on Free.
+- Username: robigzgr+review@gmail.com (dedicated review account)
+- Password: set in App Store Connect only, not in this file
+- The demo account is seeded with two vehicles (own Škoda Octavia, company VW Passat) and business, commute and private trips in the current and previous month, plus company and driver details for the potni nalog.
+- The demo account stays on Free, so the reviewer can test the purchase in sandbox.
 
 ## Notes
 
@@ -19,9 +19,9 @@ The core feature is automatic trip recording: the user does not have to open the
 
 **How to test**
 
-1. Sign in with the demo account above.
+1. Sign in with the demo account above (it already has two vehicles and sample business, commute and private trips for this and last month). The account is on the Free plan, so the subscription can be tested in sandbox.
 2. Record a manual trip: open the **Record** tab, choose a vehicle, tap **Start trip**, move (or simulate a location route), then tap **Stop trip**. The trip appears in the **Trips** tab, where you can set type, customer and purpose.
-3. Automatic detection: on the **Record** tab (or **Settings > Auto-detect trips**) turn on **Automatic detection** and allow "Always" location access. A drive is detected after the phone moves at driving speed; the trip ends a few minutes after the car stops, and a local notification asks the user to classify the trip. This needs a real drive, so we attached a **demo video of a recorded drive** (see App Review attachment) showing detection start, the trip in progress and the finished trip.
+3. Automatic detection: on the **Record** tab (or **Settings > Auto-detect trips**) turn on **Automatic detection** and allow "Always" location access. A drive is detected after the phone moves at driving speed; the trip ends a few minutes after the car stops, and a local notification asks the user to classify the trip. This needs a real drive. The attached video (App Review attachment) was recorded in the iOS Simulator with a simulated GPS route: the app is in the background when the drive starts, the trip is detected and recorded automatically, and the trip is then classified in the Trips tab. In the Simulator, location updates stop when the route ends, so the trip is ended with **Stop trip now**; on a device it ends by itself after the stationary time set in Settings.
 4. Reports: **Settings > Own-car monthly report** generates the monthly PDF (potni nalog) from the trips.
 5. Receipts: open a trip and add a receipt photo; the text is read on the device.
 
@@ -41,7 +41,6 @@ The core feature is automatic trip recording: the user does not have to open the
 
 No third-party analytics, ads or tracking. Optional anonymous monthly usage figures (count ranges only) are sent only after the user opts in, and can be turned off in **Settings > Privacy > Share anonymous usage**.
 
-Contact for review questions: TODO (name, email, phone)
 
 ## Demo video checklist
 
@@ -56,4 +55,4 @@ Record on a real iPhone with screen recording, ideally while a passenger holds t
 - [ ] Optional: show the monthly report PDF and the Plan section with Restore purchases.
 - [ ] No other people's personal data, real customer names or a readable home address visible; use the demo account.
 - [ ] Do not operate the phone while driving; the driver must not handle the phone.
-- [ ] Upload the video as an attachment in App Review Information (or link it from the notes). TODO: attach the file.
+- [x] Upload the video as an attachment in App Review Information. Submitted with 1.1 (18): `docs/app-store/milelog-auto-detection-demo.mp4`, a Simulator recording; replace it with a real-drive recording from an iPhone when possible.
