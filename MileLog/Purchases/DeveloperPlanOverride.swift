@@ -1,4 +1,6 @@
 import Foundation
+import StoreKit
+import Synchronization
 
 /// Debug and TestFlight builds only: pretend to be on another plan to test the
 /// Free allowance, the paywall and the lapse flow without touching the server.
@@ -30,12 +32,30 @@ enum DeveloperPlanOverride: String, CaseIterable, Identifiable {
 }
 
 enum BuildChannel {
-    /// Debug builds and TestFlight. App Store builds have a production receipt.
+    /// Debug builds and TestFlight. Release builds read the App Store environment
+    /// with `resolve()` and count as App Store builds until it answers (fail closed).
     nonisolated static var isTestBuild: Bool {
         #if DEBUG
         return true
         #else
-        return Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
+        return isSandbox.withLock { $0 }
+        #endif
+    }
+
+    nonisolated private static let isSandbox = Mutex(false)
+    private static var resolveTask: Task<Void, Never>?
+
+    /// Reads the signed app transaction once; later calls wait for the same answer.
+    static func resolve() async {
+        #if !DEBUG
+        if resolveTask == nil {
+            resolveTask = Task {
+                if case .verified(let app)? = try? await AppTransaction.shared {
+                    isSandbox.withLock { $0 = app.environment != .production }
+                }
+            }
+        }
+        await resolveTask?.value
         #endif
     }
 }

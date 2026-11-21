@@ -55,6 +55,9 @@ final class SubscriptionStore: ObservableObject {
         self.supabase = supabase
         guard updatesTask == nil else { return }
         updatesTask = Task { [weak self] in
+            // TestFlight accepts sandbox transactions only once the environment is known.
+            await BuildChannel.resolve()
+            self?.publishPlan()
             for await update in Transaction.updates {
                 await self?.handle(update)
             }
@@ -87,6 +90,7 @@ final class SubscriptionStore: ObservableObject {
             setPlan(.free)
             return
         }
+        await BuildChannel.resolve()
         let server = try? await supabase?.pullEntitlements()
         let local = await ourEntitlements().map(\.tx).filter(isAcceptedEnvironment).map {
             LocalEntitlement(originalTransactionID: String($0.originalID), appAccountToken: $0.appAccountToken,

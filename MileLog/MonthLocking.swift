@@ -45,7 +45,7 @@ enum MonthLocking {
     }
 }
 
-struct ClosedMonthKey: Hashable {
+nonisolated struct ClosedMonthKey: Hashable {
     var vehicleID: UUID
     var month: String
 }
