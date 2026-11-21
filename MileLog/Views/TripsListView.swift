@@ -14,6 +14,9 @@ struct TripsListView: View {
     /// bare spinner stops being reassuring — see `syncingState`.
     @State private var syncIsSlow = false
     @State private var showsMergeTrips = false
+    @EnvironmentObject var subscriptions: SubscriptionStore
+    @State private var showsMonthEndCheck = false
+    @State private var showingPaywall = false
 
     var body: some View {
         NavigationStack {
@@ -37,7 +40,22 @@ struct TripsListView: View {
             }
             .navigationTitle("Trips")
             .navigationBarTitleDisplayMode(.large)
+            .navigationDestination(isPresented: $showsMonthEndCheck) {
+                MonthEndCheckView(month: store.trips.map(\.startedAt).max() ?? Date())
+            }
+            .sheet(isPresented: $showingPaywall) { PaywallView() }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        if subscriptions.plan.allows(.monthEndCheck) {
+                            showsMonthEndCheck = true
+                        } else {
+                            showingPaywall = true
+                        }
+                    } label: {
+                        Label("Month-end check", systemImage: "checklist")
+                    }
+                }
                 // Always there, so the merge tool can be found before the app
                 // has detected a split; the count shows when there is one.
                 let splitCount = store.mergeCandidates.count

@@ -59,13 +59,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "MileLog records trips in the background so you don't have to."
+            "value" : "MileLog notices when a drive starts, even while the app is closed, and logs the trip for your mileage records. Your location is used only for your own trip log."
           }
         },
         "sl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "MileLog samodejno snema vaše vožnje v ozadju, da vam ni treba ročno."
+            "value" : "MileLog zazna začetek vožnje, tudi ko je aplikacija zaprta, in jo zabeleži v vašo evidenco prevoženih kilometrov. Lokacija se uporablja samo za vaš dnevnik voženj."
           }
         }
       }

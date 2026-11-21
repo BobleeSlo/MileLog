@@ -9,6 +9,8 @@ final class SupabaseService: ObservableObject {
 
     @Published private(set) var isAuthenticated = false
     @Published private(set) var userEmail: String?
+    /// Signed-in account id; also the `appAccountToken` on every purchase.
+    @Published private(set) var userID: UUID?
     @Published private(set) var isWorking = false
     /// Set when a sign-up confirmation link fails (expired or already used),
     /// so the sign-in screen offers to send a new one.
@@ -79,10 +81,12 @@ final class SupabaseService: ObservableObject {
             guard generation == authGeneration else { return }
             isAuthenticated = true
             userEmail = session.user.email
+            userID = session.user.id
         } catch {
             guard generation == authGeneration else { return }
             isAuthenticated = false
             userEmail = nil
+            userID = nil
         }
         didResolveInitialAuth = true
     }
@@ -330,6 +334,101 @@ final class SupabaseService: ObservableObject {
             _ = try? await client.storage.from("receipts")
                 .remove(paths: [receipt.photoPath])
         }
+    }
+
+    // MARK: - Account deletion
+
+    enum DeleteAccountError: Error {
+        case reauthRequired, offline, failed
+    }
+
+    /// Signs in again with the password, so the deletion's 10-minute check passes.
+    func reauthenticate(password: String) async throws {
+        guard let email = userEmail else { throw DeleteAccountError.failed }
+        _ = try await client.auth.signIn(email: email, password: password)
+    }
+
+    /// Calls the `delete-account` Edge Function. A "user not found" answer means
+    /// an earlier attempt already deleted the account and counts as success.
+    func deleteAccount() async throws {
+        do {
+            try await client.functions.invoke("delete-account", options: FunctionInvokeOptions(method: .post))
+        } catch FunctionsError.httpError(let code, _) where code == 404 {
+            return
+        } catch FunctionsError.httpError(let code, _) where code == 401 {
+            throw DeleteAccountError.reauthRequired
+        } catch let error as URLError where [.notConnectedToInternet, .networkConnectionLost, .timedOut].contains(error.code) {
+            throw DeleteAccountError.offline
+        } catch {
+            throw DeleteAccountError.failed
+        }
+    }
+
+    /// Local sign-out after the account no longer exists on the server.
+    func finishAfterAccountDeletion() async {
+        detector?.discardActiveTripForAccountSwitch()
+        manualLocation?.discardIfTracking()
+        detector?.disable()
+        try? await client.auth.signOut(scope: .local)
+        await refreshAuth()
+    }
+
+    // MARK: - Closed months
+
+    private struct ClosedMonthDTO: Codable {
+        var user_id: UUID?
+        var vehicle_id: UUID
+        var month: String       // first day, yyyy-MM-dd
+        var report_kind: String
+        var closed_at: Date
+    }
+
+    func pullClosedMonths() async throws -> [ClosedMonth] {
+        let rows: [ClosedMonthDTO] = try await client.from("closed_months")
+            .select("vehicle_id,month,report_kind,closed_at").execute().value
+        return rows.map { ClosedMonth(vehicleID: $0.vehicle_id, month: String($0.month.prefix(7)), reportKind: $0.report_kind, closedAt: $0.closed_at) }
+    }
+
+    /// Insert-only; a closure already recorded (another device) is ignored.
+    func pushClosedMonth(_ closure: ClosedMonth) async throws {
+        let dto = ClosedMonthDTO(user_id: try await currentUserId(), vehicle_id: closure.vehicleID,
+                                 month: closure.month + "-01", report_kind: closure.reportKind, closed_at: closure.closedAt)
+        try await client.from("closed_months")
+            .upsert(dto, onConflict: "user_id,vehicle_id,month", ignoreDuplicates: true)
+            .execute()
+    }
+
+    // MARK: - Usage figures
+
+    /// Adds one to an anonymous monthly counter through the `record_usage` function.
+    func recordUsage(month: String, metric: String, bucket: String) async throws {
+        try await client.rpc("record_usage", params: ["p_month": month, "p_metric": metric, "p_bucket": bucket]).execute()
+    }
+
+    // MARK: - Plans
+
+    /// The account's entitlement rows (RLS returns only its own).
+    func pullEntitlements() async throws -> [ServerEntitlement] {
+        try await client.from("entitlements")
+            .select("source,original_transaction_id,status,expires_at")
+            .execute().value
+    }
+
+    /// The Free plan's monthly allowance from `app_config` (readable without signing in).
+    func pullFreeAutoTripLimit() async throws -> Int? {
+        struct Row: Decodable { let value: Int }
+        let rows: [Row] = try await client.from("app_config")
+            .select("value").eq("key", value: "free_auto_trips_per_month")
+            .execute().value
+        return rows.first?.value
+    }
+
+    /// Sends a signed StoreKit transaction to the `verify-purchase` Edge Function.
+    func verifyPurchase(signedTransaction: String) async throws {
+        try await client.functions.invoke(
+            "verify-purchase",
+            options: FunctionInvokeOptions(body: ["signedTransaction": signedTransaction])
+        )
     }
 
     // MARK: - Helpers

@@ -1,0 +1,89 @@
+{
+  "identifier": "7C1D6B2E",
+  "nonRenewingSubscriptions": [],
+  "products": [],
+  "settings": {
+    "_developerTeamID": "8MM6QFGG4M",
+    "_failTransactionsEnabled": false,
+    "_locale": "en_US",
+    "_storefront": "SVN",
+    "_storeKitErrors": []
+  },
+  "subscriptionGroups": [
+    {
+      "id": "21800001",
+      "localizations": [],
+      "name": "MileLog Paid",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "3.99",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "21800002",
+          "introductoryOffer": {
+            "internalID": "218000021",
+            "numberOfPeriods": 1,
+            "paymentMode": "free",
+            "subscriptionPeriod": "P2W"
+          },
+          "localizations": [
+            {
+              "description": "Automatic trips without a limit, PDF reports, receipts and the month-end check.",
+              "displayName": "MileLog Paid (monthly)",
+              "locale": "en_US"
+            },
+            {
+              "description": "Samodejne vožnje brez omejitve, PDF poročila, računi in pregled ob koncu meseca.",
+              "displayName": "MileLog plačljivi paket (mesečno)",
+              "locale": "sl"
+            }
+          ],
+          "productID": "BT1.MileLog.paid.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "MileLog Paid (monthly)",
+          "subscriptionGroupID": "21800001",
+          "type": "RecurringSubscription",
+          "winbackOffers": []
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "29.99",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "21800003",
+          "introductoryOffer": {
+            "internalID": "218000031",
+            "numberOfPeriods": 1,
+            "paymentMode": "free",
+            "subscriptionPeriod": "P2W"
+          },
+          "localizations": [
+            {
+              "description": "Automatic trips without a limit, PDF reports, receipts and the month-end check.",
+              "displayName": "MileLog Paid (yearly)",
+              "locale": "en_US"
+            },
+            {
+              "description": "Samodejne vožnje brez omejitve, PDF poročila, računi in pregled ob koncu meseca.",
+              "displayName": "MileLog plačljivi paket (letno)",
+              "locale": "sl"
+            }
+          ],
+          "productID": "BT1.MileLog.paid.yearly",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "MileLog Paid (yearly)",
+          "subscriptionGroupID": "21800001",
+          "type": "RecurringSubscription",
+          "winbackOffers": []
+        }
+      ]
+    }
+  ],
+  "version": {
+    "major": 4,
+    "minor": 0
+  }
+}

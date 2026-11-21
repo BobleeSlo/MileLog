@@ -1,0 +1,6 @@
+project_id = "rjkohvddlenyeywhxulc"
+
+# App Store Server Notifications arrive from Apple without a Supabase JWT;
+# the function verifies Apple's signed payload itself.
+[functions.apple-notifications]
+verify_jwt = false

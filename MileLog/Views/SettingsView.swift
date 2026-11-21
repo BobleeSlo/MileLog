@@ -1,6 +1,7 @@
 import SwiftUI
 import CoreLocation
 import UIKit
+import StoreKit
 
 struct SettingsView: View {
     @EnvironmentObject var store: Store
@@ -9,6 +10,11 @@ struct SettingsView: View {
     @EnvironmentObject var location: LocationManager
     @EnvironmentObject var appLock: AppLock
     @EnvironmentObject var language: AppLanguage
+    @EnvironmentObject var subscriptions: SubscriptionStore
+    @EnvironmentObject var usage: Usage
+    @State private var showingPaywall = false
+    @State private var showingManageSubscription = false
+    @State private var isRestoring = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var exportURL: URL?
     @State private var lockResultMessage: String?
@@ -28,6 +34,14 @@ struct SettingsView: View {
     @State private var logbookMonth: Int = Calendar.current.component(.month, from: Date())
 
     private enum Field: Hashable { case rate, commuteRate, home, work }
+
+    private var planName: String {
+        switch subscriptions.plan {
+        case .paid: String(localized: "Paid", bundle: .app)
+        case .free: String(localized: "Free", bundle: .app)
+        case .freeOtherAccount: String(localized: "Free — subscription on another account", bundle: .app)
+        }
+    }
     @FocusState private var focusedField: Field?
 
     var body: some View {
@@ -140,11 +154,11 @@ struct SettingsView: View {
                 Section {
                     PrettyStepper(
                         value: $store.settings.lockAfterDays,
-                        range: 1...90,
-                        label: "Lock trips after",
-                        unit: "days"
+                        range: 1...MonthLocking.maxDaysIntoNextMonth,
+                        label: "Lock a month's trips",
+                        unit: "days into the next month"
                     )
-                    Text("Once locked, a trip's mileage / date / vehicle become immutable. Edits to purpose, customer, and notes are still allowed but recorded in the audit log.")
+                    Text("A month's trips stay editable until you generate its report after the month ends, or until this many days into the next month. Once locked, a trip's mileage / date / vehicle become immutable. Edits to purpose, customer, and notes are still allowed but recorded in the audit log.")
                         .font(.footnote)
                         .foregroundColor(.secondary)
 
@@ -376,6 +390,84 @@ struct SettingsView: View {
                         .font(.caption)
                 }
 
+                // MARK: Plan
+                Section {
+                    LabeledContent("Current plan", value: planName)
+                    if case .paid(let until?) = subscriptions.plan {
+                        LabeledContent("Renews or ends", value: until.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted).locale(Format.locale)))
+                    }
+                    if subscriptions.plan.isPaid {
+                        Button {
+                            showingManageSubscription = true
+                        } label: {
+                            Label("Manage subscription", systemImage: "creditcard")
+                        }
+                    } else {
+                        Button {
+                            showingPaywall = true
+                        } label: {
+                            Label("See what Paid adds", systemImage: "star")
+                        }
+                    }
+                    Button {
+                        isRestoring = true
+                        Task {
+                            await subscriptions.restore()
+                            isRestoring = false
+                        }
+                    } label: {
+                        HStack {
+                            Label("Restore purchases", systemImage: "arrow.clockwise")
+                            if isRestoring { Spacer(); ProgressView() }
+                        }
+                    }
+                    .disabled(isRestoring)
+                } header: {
+                    SectionHeaderLabel(title: "Plan", systemImage: "star.circle")
+                } footer: {
+                    HStack(spacing: 16) {
+                        Link("Privacy policy", destination: AppLinks.privacyPolicy)
+                        Link("Terms of use", destination: AppLinks.termsOfUse)
+                    }
+                    .font(.caption)
+                }
+
+                // MARK: Developer (debug and TestFlight builds only)
+                if BuildChannel.isTestBuild {
+                    Section {
+                        Picker("Pretend plan", selection: Binding(
+                            get: { subscriptions.developerOverride },
+                            set: { newValue in
+                                // A lapse asks again which vehicle keeps recording.
+                                if newValue == .lapsed { store.recordingVehicleID = nil }
+                                subscriptions.developerOverride = newValue
+                            }
+                        )) {
+                            ForEach(DeveloperPlanOverride.allCases) { option in
+                                Text(option.label).tag(option)
+                            }
+                        }
+                    } header: {
+                        SectionHeaderLabel(title: "Developer", systemImage: "hammer")
+                    } footer: {
+                        Text("Test builds only. The app behaves as if on this plan; your real subscription and the server are unchanged. App Store builds never show this.")
+                            .font(.caption)
+                    }
+                }
+
+                // MARK: Privacy
+                Section {
+                    Toggle("Share anonymous usage", isOn: Binding(
+                        get: { usage.consent == true },
+                        set: { usage.consent = $0 }
+                    ))
+                } header: {
+                    SectionHeaderLabel(title: "Privacy", systemImage: "hand.raised")
+                } footer: {
+                    Text("Once a month MileLog sends rough counts — how many automatic trips, reports, receipts and month-end checks, in ranges such as 11–15 — with no trips, places or device details. It helps decide the Free plan's limits. Nothing depends on it.")
+                        .font(.caption)
+                }
+
                 // MARK: Account
                 Section {
                     LabeledContent("Signed in as", value: supabase.userEmail ?? "—")
@@ -391,6 +483,12 @@ struct SettingsView: View {
                         Task { await supabase.signOut() }
                     } label: {
                         Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+                    }
+                    NavigationLink {
+                        DeleteAccountView()
+                    } label: {
+                        Label("Delete account", systemImage: "trash")
+                            .foregroundStyle(.red)
                     }
                 } header: {
                     SectionHeaderLabel(title: "Account", systemImage: "person.crop.circle")
@@ -409,6 +507,8 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .keyboardDoneToolbar()
+            .sheet(isPresented: $showingPaywall) { PaywallView() }
+            .manageSubscriptionsSheet(isPresented: $showingManageSubscription)
             .onAppear {
                 refreshExport()
                 // With a single company car there's nothing to choose — the
@@ -569,13 +669,18 @@ struct SettingsView: View {
             candidateTrips: candidates,
             formatRow: { trip in AnyView(ownCarRow(trip: trip)) },
             generate: { chosen in
-                PDFReporter.generateMonthlyOwnCar(
+                let result = PDFReporter.generateMonthlyOwnCar(
                     trips: chosen,
                     vehicleLookup: { store.vehicle($0) },
                     businessRate: businessRate,
                     commuteRate: commuteRate,
                     year: year, month: month
                 )
+                // A report for an ended month closes it for its vehicles (KTD10).
+                if result != nil {
+                    store.closeMonth(year: year, month: month, vehicleIDs: Set(chosen.map(\.vehicleID)), reportKind: "own_car")
+                }
+                return result
             }
         )
     }
@@ -612,12 +717,16 @@ struct SettingsView: View {
                 defaultSelected: candidates.filter { $0.type != .privateTrip },
                 formatRow: { trip in AnyView(logbookRow(trip: trip)) },
                 generate: { chosen in
-                    PDFReporter.generateCompanyCarLogbook(
+                    let result = PDFReporter.generateCompanyCarLogbook(
                         trips: chosen,
                         vehicle: captured,
                         settings: store.settings,
                         year: year, month: month
                     )
+                    if result != nil {
+                        store.closeMonth(year: year, month: month, vehicleIDs: [captured.id], reportKind: "company_logbook")
+                    }
+                    return result
                 }
             )
         }

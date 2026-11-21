@@ -86,6 +86,16 @@ struct AuthView: View {
                     Text("Your trips are private and only visible to you.")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                    if isSignUp {
+                        Text("By creating an account you agree to the terms of use and the privacy policy.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        HStack(spacing: 16) {
+                            Link("Terms of use", destination: AppLinks.termsOfUse)
+                            Link("Privacy policy", destination: AppLinks.privacyPolicy)
+                        }
+                        .font(.caption)
+                    }
                 }
             }
             .navigationTitle("MileLog")
