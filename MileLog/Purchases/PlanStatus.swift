@@ -50,7 +50,7 @@ struct CachedPlan: Codable, Equatable {
     var checkedAt: Date
 
     /// Trusted until the earlier of its expiry and seven days after the last server check.
-    static let maxAge: TimeInterval = 7 * 24 * 3600
+    nonisolated static let maxAge: TimeInterval = 7 * 24 * 3600
 }
 
 enum PlanResolver {
