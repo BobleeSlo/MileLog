@@ -2,25 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleDevelopmentRegion</key>
-	<string>$(DEVELOPMENT_LANGUAGE)</string>
-	<key>CFBundleExecutable</key>
-	<string>$(EXECUTABLE_NAME)</string>
-	<key>CFBundleIdentifier</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-	<key>CFBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
 	<key>CFBundleLocalizations</key>
 	<array>
 		<string>en</string>
 		<string>sl</string>
 	</array>
-	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
-	<key>CFBundlePackageType</key>
-	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
-	<key>CFBundleShortVersionString</key>
-	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -34,24 +20,6 @@
 			</array>
 		</dict>
 	</array>
-	<key>CFBundleVersion</key>
-	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
-	<key>LSRequiresIPhoneOS</key>
-	<true/>
-	<key>NSCameraUsageDescription</key>
-	<string>Take a photo of a receipt to attach it to a trip.</string>
-	<key>NSFaceIDUsageDescription</key>
-	<string>MileLog uses Face ID to lock the app so only you can see your trips.</string>
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>MileLog notices when a drive starts, even while the app is closed, and logs the trip for your mileage records. Your location is used only for your own trip log.</string>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>MileLog measures the distance of your trips.</string>
-	<key>NSMotionUsageDescription</key>
-	<string>Confirms that you are actually driving, so trips are not started by walking.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Attach an existing receipt photo to a trip.</string>
 	<key>SUPABASE_ANON_KEY</key>
 	<string>$(SUPABASE_ANON_KEY)</string>
 	<key>SUPABASE_URL</key>
@@ -62,9 +30,5 @@
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
-	<key>UISupportedInterfaceOrientations</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-	</array>
 </dict>
 </plist>

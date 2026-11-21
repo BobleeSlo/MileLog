@@ -42,19 +42,21 @@ struct PaywallView: View {
         }
     }
 
+    /// StoreKit hosts this marketing content without the app's locale environment,
+    /// so each string is resolved from the in-app language bundle up front.
     private var header: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("MileLog Paid")
                 .font(.largeTitle.bold())
             VStack(alignment: .leading, spacing: 10) {
-                Label("Unlimited automatic trips", systemImage: "car.fill")
-                Label("Monthly PDF reports and potni nalog", systemImage: "doc.richtext")
-                Label("Receipt photos", systemImage: "camera")
-                Label("Month-end check before you close a month", systemImage: "checklist")
-                Label("More than one vehicle", systemImage: "car.2.fill")
+                Label(String(localized: "Unlimited automatic trips", bundle: .app), systemImage: "car.fill")
+                Label(String(localized: "Monthly PDF reports and potni nalog", bundle: .app), systemImage: "doc.richtext")
+                Label(String(localized: "Receipt photos", bundle: .app), systemImage: "camera")
+                Label(String(localized: "Month-end check before you close a month", bundle: .app), systemImage: "checklist")
+                Label(String(localized: "More than one vehicle", bundle: .app), systemImage: "car.2.fill")
             }
             .font(.body)
-            Text("Free keeps manual recording, a monthly allowance of automatic trips, CSV export and all your history.")
+            Text(String(localized: "Free keeps manual recording, a monthly allowance of automatic trips, CSV export and all your history.", bundle: .app))
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

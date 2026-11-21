@@ -433,11 +433,17 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MileLog/Info.plist;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Take a photo of a receipt to attach it to a trip.";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "MileLog uses Face ID to lock the app so only you can see your trips.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "MileLog notices when a drive starts, even while the app is closed, and logs the trip for your mileage records. Your location is used only for your own trip log.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "MileLog measures the distance of your trips.";
+				INFOPLIST_KEY_NSMotionUsageDescription = "Confirms that you are actually driving, so trips are not started by walking.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Attach an existing receipt photo to a trip.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -467,11 +473,17 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MileLog/Info.plist;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Take a photo of a receipt to attach it to a trip.";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "MileLog uses Face ID to lock the app so only you can see your trips.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "MileLog notices when a drive starts, even while the app is closed, and logs the trip for your mileage records. Your location is used only for your own trip log.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "MileLog measures the distance of your trips.";
+				INFOPLIST_KEY_NSMotionUsageDescription = "Confirms that you are actually driving, so trips are not started by walking.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Attach an existing receipt photo to a trip.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

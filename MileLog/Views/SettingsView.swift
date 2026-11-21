@@ -609,8 +609,8 @@ struct SettingsView: View {
         switch detector.permission {
         case .authorizedAlways:
             return detector.isEnabled
-                ? "Monitoring is active. Pair your cars under Vehicles to identify which car you're driving."
-                : "Permission granted but monitoring is off — toggle off and on to restart."
+                ? String(localized: "Monitoring is active. Pair your cars under Vehicles to identify which car you're driving.", bundle: .app)
+                : String(localized: "Permission granted but monitoring is off — toggle off and on to restart.", bundle: .app)
         case .authorizedWhenInUse:
             return String(localized: "Need 'Always' location permission for background detection. Tap the button below to upgrade.", bundle: .app)
         case .notDetermined:

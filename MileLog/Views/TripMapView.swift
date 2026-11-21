@@ -30,10 +30,10 @@ struct TripMapView: UIViewRepresentable {
         uiView.addOverlay(polyline)
 
         if let first = coords.first {
-            uiView.addAnnotation(annotation(at: first, title: "Start"))
+            uiView.addAnnotation(annotation(at: first, title: String(localized: "Start", bundle: .app, comment: "Map pin at the start of a trip")))
         }
         if let last = coords.last {
-            uiView.addAnnotation(annotation(at: last, title: "End"))
+            uiView.addAnnotation(annotation(at: last, title: String(localized: "End", bundle: .app, comment: "Map pin at the end of a trip")))
         }
 
         uiView.setVisibleMapRect(

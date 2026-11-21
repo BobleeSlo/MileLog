@@ -271,7 +271,9 @@ struct RecordTripView: View {
         }
         switch detector.permission {
         case .authorizedAlways:
-            return detector.isEnabled ? "Watching for trips" : "Starting…"
+            return detector.isEnabled
+                ? String(localized: "Watching for trips", bundle: .app)
+                : String(localized: "Starting…", bundle: .app)
         case .notDetermined:
             // Distinct from .authorizedWhenInUse below: telling the user
             // to "open Settings" here was actively wrong — iOS won't show
@@ -286,7 +288,7 @@ struct RecordTripView: View {
         case .denied, .restricted:
             return String(localized: "Location denied — enable in iOS Settings", bundle: .app)
         @unknown default:
-            return "On"
+            return String(localized: "On", bundle: .app)
         }
     }
 
